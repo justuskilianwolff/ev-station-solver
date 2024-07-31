@@ -1,0 +1,59 @@
+[project]
+name = "ev-station-solver"
+version = "1.0.0"
+description = "The solver to the paper 'Optimal placement of electric vehicle slow-charging stations: A continuous facility location problem under uncertainty' by H.W. Ljósheim, S. Jenkins, K.D. Searle, J.K. Wolff"
+authors = [
+    { name = "Justus Kilian Wolff", email = "hi@justuskilianwolff.com" },
+    { name = "K.D. Searle" },
+    { name = "H.W. Ljósheim" },
+    { name = "S. Jenkins" },
+]
+dependencies = [
+    "numpy==1.26.4",
+    "pandas>=2.0.3",
+    "docplex>=2.27.239",
+    "scikit-learn>=1.3.2",
+    "tqdm>=4.66.2",
+    "k-means-constrained>=0.7.3",
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[project.optional-dependencies]
+gui = ["plotly>=5.23.0", "streamlit>=1.37.0"]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = ["vulture>=2.11", "ruff>=0.5.5"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ev_station_solver"]
+
+
+[tool.ruff]
+line-length = 120
+respect-gitignore = false
+src = ["src"]
+extend-include = ["*.ipynb"]
+exclude = [
+    "miscellaneous/autoencoders/schreyer/KDD_2019_Lab.ipynb",
+    ".venv",
+    "paper",
+]
+
+[tool.ruff.lint]
+extend-select = ["I"] # also sort imports etc
+ignore = ["E731"]     # ignore not using lambda functions
+
+[tool.vulture]
+exclude = [".venv"]
+min_confidence = 100
+paths = ["."]
