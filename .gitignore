@@ -169,3 +169,5 @@ solution.csv
 requirements*.lock
 
 .DS_Store
+
+.vscode/
