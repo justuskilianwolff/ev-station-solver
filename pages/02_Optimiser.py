@@ -131,7 +131,7 @@ with st.sidebar:
         Make sure that you give the solver enough locations to choose from to obtain a first feasible solution"""
     )
     n_clusters_est = int(
-        len(df_vehicle_locations) * MOPTA_CONSTANTS["mu_charging"] / (2 * MOPTA_CONSTANTS["station_ub"])
+        len(df_vehicle_locations) * MOPTA_CONSTANTS["mu_charging"] / (MOPTA_CONSTANTS["queue_size"] * station_ub)
     )
 
     num_k_means = st.sidebar.slider(
