@@ -130,7 +130,9 @@ with st.sidebar:
         """Set the number of initial locations to be generated using K-Means clustering and randomly. 
         Make sure that you give the solver enough locations to choose from to obtain a first feasible solution"""
     )
-    n_clusters_est = int(len(df_vehicle_locations) * MOPTA_CONSTANTS["mu_charging"] / (2 * MOPTA_CONSTANTS["max_size"]))
+    n_clusters_est = int(
+        len(df_vehicle_locations) * MOPTA_CONSTANTS["mu_charging"] / (2 * MOPTA_CONSTANTS["station_ub"])
+    )
 
     num_k_means = st.sidebar.slider(
         label="Number of K-Means Locations",

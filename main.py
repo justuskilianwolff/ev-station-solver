@@ -6,7 +6,7 @@ from ev_station_solver.mopta_solver import MOPTASolver
 
 # use given starting solutions
 locations = load_locations("small").sample(100).values
-n_clusters = int(len(locations) * MOPTA_CONSTANTS["mu_charging"] / (2 * MOPTA_CONSTANTS["max_size"]))
+n_clusters = int(len(locations) * MOPTA_CONSTANTS["mu_charging"] / (2 * MOPTA_CONSTANTS["station_ub"]))
 
 
 mopta_solver = MOPTASolver(
