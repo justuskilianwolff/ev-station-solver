@@ -286,7 +286,11 @@ class MOPTASolver:
     def add_max_queue_constraints(self, s: int, K: Iterable):
         logger.debug("Adding max queue constraints (allocated vehicles <= max queue).")
         return self.m.add_constraints(
-            (self.m.sum(self.u[s][i, k] for i in self.I[s] if self.reachable[s][i, k]) <= 2 * self.n[k] for k in K),
+            (
+                self.m.sum(self.u[s][i, k] for i in self.I[s] if self.reachable[s][i, k])
+                <= MOPTA_CONSTANTS["queue_size"] * self.n[k]
+                for k in K
+            ),
             names=(f"allocation_2n_{s}_{k}" for k in K),
         )
 

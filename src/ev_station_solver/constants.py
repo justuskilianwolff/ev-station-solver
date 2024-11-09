@@ -1,6 +1,7 @@
 MOPTA_CONSTANTS = {
     "mu_charging": 0.4203,  # mean of vehicles charging
-    "max_size": 8,  # 2 * 8 vehicles
+    "max_size": 8,  # number of chargers a station can accommodate
+    "queue_size": 2,  # multiple of cars that can queue for charging
     # ranges
     "mu_range": 100,  # mean range of vehicles
     "sigma_range": 50,  # std of range of vehicles
