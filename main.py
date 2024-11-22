@@ -19,8 +19,12 @@ mopta_solver = MOPTASolver(
 mopta_solver.add_initial_locations(n_clusters + 50, mode="k-means", seed=0)
 mopta_solver.add_samples(num=1)
 
-n, L, mip_gap, mip_gap_relative, iterations = mopta_solver.solve(verbose=False, timelimit=10, epsilon_stable=100)
+v_sol_built, locations_built, mip_gap, mip_gap_relative, iterations = mopta_solver.solve(
+    verbose=False, timelimit=10, epsilon_stable=100
+)
 
 objective_values, build_cost, distance_cost, service_levels, mip_gaps = mopta_solver.allocation_problem(
-    L_sol=L, n_sol=n, n_iter=10
+    locations_built=locations_built, v_sol_built=v_sol_built, n_iter=10
 )
+
+print("Test")

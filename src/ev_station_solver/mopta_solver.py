@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Callable, Iterable, List, Tuple
+from typing import Callable, Iterable, Literal, Optional, Tuple
 
 import numpy as np
 from docplex.mp.model import Model
@@ -49,6 +49,13 @@ class MOPTASolver:
         streamlit_callback: Callable = None,
     ):
         """
+        Initialize the MOPTA solver with the given parameters.
+
+        Common abbreviations:
+        - dv: decision variable
+        - lt: less than
+        - cl: charging location
+        - n: number
 
         :param vehicle_locations: the locations of the vehicles
         :param loglevel: logging level, e.g., logging.DEBUG, logging.INFO
@@ -75,6 +82,7 @@ class MOPTASolver:
         if service_level <= 0 or service_level > 1:
             raise ValueError("Service level should be within (0,1].")
 
+        # set total vehicle locations
         self.vehicle_locations = vehicle_locations
         self.n_vehicles = len(self.vehicle_locations)
 
@@ -84,26 +92,28 @@ class MOPTASolver:
         self.y_min = np.min(self.vehicle_locations[:, 1])  # most down vehicle
         self.y_max = np.max(self.vehicle_locations[:, 1])  # most up vehicle
 
-        # generate al lists need for samples
-        self.l = []  # number of vehicles in samples
-        self.I = []  # indices of vehicles in samples
-        self.R = []  # ranges of vehicles in samples
-        self.D = []  # distance matrix of vehicles in samples
-        self.reachable = []  # reachable matrix of vehicles in samples
-        self.X = []  # vehicle locations in samples
-        self.S = None  # indices of samples
-        self.n_samples = 0  # number of samples
+        # Samples: generate all lists needed for samples
+        self.n_vehicles_samples: list = []  # list of number of vehicles in sample
+        self.I: list = []  # indices of vehicles in sample # TODO: find out what this is for
+        self.ranges_arrays: list = []  # numpy 1D array of ranges of vehicles in sample
+        self.distance_matrices: list = []  # distance matrix of vehicles in sample
+        self.reachability_matrices: list = []  # reachable matrix of vehicles in sample
+        self.vehicle_locations_matrices: list = []  # vehicle locations in sample
+        self.samples_range: Optional[range] = None  # indices of sample ()
+        self.n_samples: int = 0  # total number of samples
 
         # charging locations
-        self.L = None  # charging locations
-        self.w = None  # number of charging locations
+        self.coordinates_potential_cl: Optional[np.ndarray] = None  # charging locations
+        self.n_potential_cl: Optional[int] = None  # number of charging locations
         self.J = None  # indices of charging locations
 
-        # model
-        self.m = None  # model
-        self.b = None  # build binary variables
-        self.n = None  # number integer variables
-        self.u = None  # allocation binary variables
+        # model and decision variables
+        self.m = None  # docplex model
+        self.v = None  # binary decision variables whether to build cl or not
+        self.w = None  # integer decision variables how many to build at cl
+        self.u = None  # binary decision variables for allocation per sample
+
+        # cost terms
         self.station_ub = station_ub  # upper bound on number of stations
         self.build_cost_param = build_cost  # build cost
         self.maintenance_cost_param = maintenance_cost  # maintenance cost
@@ -134,15 +144,21 @@ class MOPTASolver:
         self.kpi_fixed_charge = None
         self.kpi_total = None
 
-        # solutions
-        self.solutions = []
+        # solutions for each iteration
+        self.solutions = []  # tuples of (b_sol, n_sol, u_sol)
         self.objective_values = [np.inf]
         self.added_locations = []  # list of lists of the added locations per iteration
 
         # streamlit
         self.streamlit_callback = streamlit_callback  # callback function for streamlit
 
-    def add_initial_locations(self, n_stations, mode="random", verbose=0, seed=None) -> None:
+    def add_initial_locations(
+        self,
+        n_stations: int,
+        mode: Literal["random", "k-means", "k-means-constrained"] = "random",
+        verbose: int = 0,
+        seed: Optional[int] = None,
+    ) -> None:
         """
         Add initial locations to the model
         :param n_stations: number of locations to add
@@ -183,15 +199,15 @@ class MOPTASolver:
                 'Invalid mode for initial locations. Choose between "random", "k-means" or "k-means-constrained".'
             )
 
-        # add new locations to existing locations or create self.L
-        if self.L is None:
-            self.L = new_locations
+        # add new locations to existing locations or create self.coordinates_potential_cl
+        if self.coordinates_potential_cl is None:
+            self.coordinates_potential_cl = new_locations
         else:
-            self.L = np.concatenate((self.L, new_locations))
+            self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, new_locations))
 
-        self.w = len(self.L)
-        self.J = range(self.w)
-        self.added_locations.append(self.L)
+        self.n_potential_cl = len(self.coordinates_potential_cl)
+        self.J = range(self.n_potential_cl)
+        self.added_locations.append(self.coordinates_potential_cl)
 
     def get_sample(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -209,27 +225,27 @@ class MOPTASolver:
         """
         logger.debug("Adding sample.")
 
-        if self.L is None:
+        if self.coordinates_potential_cl is None:
             raise Exception("Please add initial locations before adding samples.")
 
         # get sample
-        ranges, charging_prob, charging = self.get_sample()
+        ranges, _, charging = self.get_sample()
 
         # mask vehicles that are actually charging
         charging_vehicles = self.vehicle_locations[charging]
-        self.l.append(len(charging_vehicles))
+        self.n_vehicles_samples.append(len(charging_vehicles))
         self.I.append(range(len(charging_vehicles)))
-        self.R.append(ranges[charging])
-        self.D.append(get_distance_matrix(charging_vehicles, self.L))
-        self.reachable.append((self.D[-1].T <= self.R[-1]).T)
-        self.X.append(charging_vehicles)
+        self.ranges_arrays.append(ranges[charging])
+        self.distance_matrices.append(get_distance_matrix(charging_vehicles, self.coordinates_potential_cl))
+        self.reachability_matrices.append((self.distance_matrices[-1].T <= self.ranges_arrays[-1]).T)
+        self.vehicle_locations_matrices.append(charging_vehicles)
 
         # Update sample sets and number of samples
-        if self.S is None:
-            self.S = range(1)
+        if self.samples_range is None:
+            self.samples_range = range(1)
             self.n_samples = 1
         else:
-            self.S = range(self.S.stop + 1)  # update sample set
+            self.samples_range = range(self.samples_range.stop + 1)  # update sample set
             self.n_samples += 1
 
     def add_samples(self, num: int):
@@ -237,63 +253,72 @@ class MOPTASolver:
             self.add_sample()
         logger.info(f"Added {num} samples. Total number of samples: {self.n_samples}.")
 
-    def create_b(self, K: Iterable):
+    def create_dv_v(self, K: Iterable):  # TODO: check why K is used and not J ( also below)
         """
-        Create binary variables b_k for each location k in K
+        Create binary variables v_k for each location k in K
         :param K: Iterable of (some) locations
         :return: b
         """
-        created_b = np.array([self.m.binary_var(name=f"b_{k}") for k in K])
-        if self.b is None:
+        created_v = np.array([self.m.binary_var(name=f"v_{k}") for k in K])
+        if self.v is None:
             # if b didn't exist yet, return created b
-            return created_b
+            return created_v
         else:
             # if b already exists, append created b to existing b
-            return np.append(self.b, created_b)
+            return np.append(self.v, created_v)
 
-    def create_n(self, K: Iterable):
+    def create_dv_w(self, K: Iterable):
         """
         Create integer variables n_k for each location k in K
         :param K: Iterable of (some) locations
         :return: n
         """
-        created_n = np.array([self.m.integer_var(name=f"n_{k}") for k in K])
-        if self.n is None:
-            return created_n
+        created_w = np.array([self.m.integer_var(name=f"w_{k}") for k in K])
+        if self.w is None:
+            return created_w
         else:
-            return np.append(self.n, created_n)
+            return np.append(self.w, created_w)
 
-    def create_u_s(self, s: int, K: Iterable):
+    def create_dv_u_s(self, s: int, K: Iterable):
         created_u_s = np.array(
-            [self.m.binary_var(name=f"u_{s}_{i}_{k}") if self.reachable[s][i, k] else 0 for i in self.I[s] for k in K]
+            [
+                self.m.binary_var(name=f"u_{s}_{i}_{k}") if self.reachability_matrices[s][i, k] else 0
+                for i in self.I[s]
+                for k in K
+            ]
         )
-        created_u_s = created_u_s.reshape(self.l[s], len(K))
+        created_u_s = created_u_s.reshape(self.n_vehicles_samples[s], len(K))
         try:
             return np.concatenate((self.u[s], created_u_s), axis=1)
         except Exception:
             return created_u_s
 
-    def add_b_n_constraints(self, K: Iterable):
-        logger.debug("Adding b - n constraints (n <= b * station upperbound).")
+    def add_w_lt_mv_constraint(
+        self, K: Iterable
+    ):  # TODO: this should be J though right, sicne independent of samples (see below)
+        logger.debug("Adding 'w <= v * station_upperbound' constraints.")
         return self.m.add_constraints(
-            (self.n[k] <= self.b[k] * self.station_ub for k in K), names=(f"number_b_{k}" for k in K)
+            (self.w[k] <= self.v[k] * self.station_ub for k in K), names=(f"number_w_{k}" for k in K)
         )
 
-    def add_n_b_constraints(self, K: Iterable):
-        logger.debug("Adding n - b constraints (b <= n).")
-        return self.m.add_constraints((self.b[k] <= self.n[k] for k in K), names=(f"number_n_{k}" for k in K))
+    def add_v_lt_w_constraints(self, K: Iterable):
+        logger.debug("Adding 'b <= n' constraints.")
+        return self.m.add_constraints((self.v[k] <= self.w[k] for k in K), names=(f"number_v_{k}" for k in K))
 
     def add_max_queue_constraints(self, s: int, K: Iterable, q: int = MOPTA_CONSTANTS["queue_size"]):
         logger.debug("Adding max queue constraints (allocated vehicles <= max queue).")
         return self.m.add_constraints(
-            (self.m.sum(self.u[s][i, k] for i in self.I[s] if self.reachable[s][i, k]) <= q * self.n[k] for k in K),
-            names=(f"allocation_2n_{s}_{k}" for k in K),
+            (
+                self.m.sum(self.u[s][i, k] for i in self.I[s] if self.reachability_matrices[s][i, k]) <= q * self.w[k]
+                for k in K
+            ),
+            names=(f"allocation_qw_{s}_{k}" for k in K),
         )
 
     def add_allocation_constraints(self, s: int, K: Iterable):
         logger.debug("Adding allocation constraints (every vehicle is allocated to at most one station).")
         return self.m.add_constraints(
-            (self.m.sum(self.u[s][i, k] for k in K if self.reachable[s][i, k]) <= 1 for i in self.I[s]),
+            (self.m.sum(self.u[s][i, k] for k in K if self.reachability_matrices[s][i, k]) <= 1 for i in self.I[s]),
             names=(f"charger_allocation_{s}_{i}" for i in self.I[s]),
         )
 
@@ -301,37 +326,42 @@ class MOPTASolver:
         logger.debug(f"Adding service constraint (min. {self.service_level * 100}% of vehicles are allocated).")
         return self.m.add_constraint(
             (
-                self.m.sum(self.u[s][i, k] for i in self.I[s] for k in K if self.reachable[s][i, k])
-                >= self.service_level * self.l[s]
+                self.m.sum(self.u[s][i, k] for i in self.I[s] for k in K if self.reachability_matrices[s][i, k])
+                >= self.service_level * self.n_vehicles_samples[s]
             ),
             ctname=f"service_level_{s}",
         )
 
     def get_build_cost(self, K: Iterable):
-        return self.build_cost_param * self.m.sum(self.b[k] for k in K)
+        return self.build_cost_param * self.m.sum(self.v[k] for k in K)
 
     def get_maintenance_cost(self, K: Iterable):
-        return self.maintenance_cost_param * self.m.sum(self.n[k] for k in K)
+        return self.maintenance_cost_param * self.m.sum(self.w[k] for k in K)
 
     def get_drive_charge_cost(self, s: int, K: Iterable):
         return self.drive_charge_cost_param * self.m.sum(
-            self.u[s][i, k] * self.D[s][i, k] for i in self.I[s] for k in K if self.reachable[s][i, k]
+            self.u[s][i, k] * self.distance_matrices[s][i, k]
+            for i in self.I[s]
+            for k in K
+            if self.reachability_matrices[s][i, k]
         )
 
     def get_fixed_charge_cost(self, s: int):
-        return self.charge_cost_param * (250 - self.R[s]).sum()
+        return self.charge_cost_param * (250 - self.ranges_arrays[s]).sum()
 
     def set_decision_variables(self, K: Iterable):
         logger.debug(f"We add {2 * len(K)} variables for b and n.")
 
-        self.b = self.create_b(K=K)
-        self.n = self.create_n(K=K)
+        self.v = self.create_dv_v(K=K)
+        self.w = self.create_dv_w(K=K)
 
-        logger.debug(f"We add {sum(self.reachable[s][:, K].sum() for s in self.S)} variables for u.")
+        logger.debug(
+            f"We add {sum(self.reachability_matrices[s][:, K].sum() for s in self.samples_range)} variables for u."
+        )
         if self.u is None:
             self.u = []
-        for s in self.S:
-            created_u = self.create_u_s(s=s, K=K)
+        for s in self.samples_range:
+            created_u = self.create_dv_u_s(s=s, K=K)
             try:
                 self.u[s] = created_u
             except Exception:
@@ -339,16 +369,20 @@ class MOPTASolver:
 
     def initialize_model(self):
         # check that samples have been added
-        if self.S is None:
+        if self.samples_range is None:
             raise ValueError("No samples have been added. Please add samples before solving the model.")
 
+        # intialise model
         self.m = Model(name="MOPTA - Location Improvement", cts_by_name=True)
+
         # create decision variables
         logger.info("Creating decision variables...")
         self.set_decision_variables(K=self.J)
-        # constraints
+
+        # add constraints
         logger.info("Creating constraints...")
         self.set_constraints(K=self.J)
+
         logger.info("Model is initialized.")
 
     def set_constraints(self, K: Iterable):
@@ -367,42 +401,44 @@ class MOPTASolver:
         if self.fixed_station_number is not None:
             if self.fixed_station_number_constraint is None:
                 self.fixed_station_number_constraint = self.m.add_constraint(
-                    self.m.sum(self.b) == self.fixed_station_number, ctname="fixed_station_number"
+                    self.m.sum(self.v) == self.fixed_station_number, ctname="fixed_station_number"
                 )
             else:
                 self.fixed_station_number_constraint = self.m.get_constraint_by_name(
                     "fixed_station_number"
-                ).left_expr.add(self.m.sum(self.b[k] for k in K))
+                ).left_expr.add(self.m.sum(self.v[k] for k in K))
 
         if self.b_n_constraint is None:  # then all of them are uninitialized
-            self.b_n_constraint = self.add_b_n_constraints(K=K)
-            self.n_b_constraint = self.add_n_b_constraints(K=K)
-            for s in self.S:
+            self.b_n_constraint = self.add_w_lt_mv_constraint(K=K)
+            self.n_b_constraint = self.add_v_lt_w_constraints(K=K)
+            for s in self.samples_range:
                 self.max_queue_constraints.append(self.add_max_queue_constraints(s=s, K=K))
                 self.allocation_constraints.append(self.add_allocation_constraints(s=s, K=K))
                 self.service_constraints.append(self.add_service_constraint(s=s, K=K))
         else:
-            self.b_n_constraint += self.add_b_n_constraints(K=K)
-            self.n_b_constraint += self.add_n_b_constraints(K=K)
-            for s in self.S:
+            self.b_n_constraint += self.add_w_lt_mv_constraint(K=K)
+            self.n_b_constraint += self.add_v_lt_w_constraints(K=K)
+            for s in self.samples_range:
                 self.max_queue_constraints[s] += self.add_max_queue_constraints(s=s, K=K)
                 self.service_constraints[s] = self.m.get_constraint_by_name(f"service_level_{s}").left_expr.add(
-                    self.m.sum(self.u[s][i, k] for i in self.I[s] for k in K if self.reachable[s][i, k])
+                    self.m.sum(self.u[s][i, k] for i in self.I[s] for k in K if self.reachability_matrices[s][i, k])
                 )
                 for i in self.I[s]:
                     self.allocation_constraints[s][i] = self.m.get_constraint_by_name(
                         f"charger_allocation_{s}_{i}"
-                    ).left_expr.add(self.m.sum(self.u[s][i, k] for k in K if self.reachable[s][i, k]))
+                    ).left_expr.add(self.m.sum(self.u[s][i, k] for k in K if self.reachability_matrices[s][i, k]))
 
     def extract_solution(self, sol: SolveSolution, dtype=float):
         logger.info("Extracting solution.")
-        b_sol = np.array(sol.get_value_list(dvars=self.b)).round().astype(dtype)
-        n_sol = np.array(sol.get_value_list(dvars=self.n)).round().astype(dtype)
+        b_sol = np.array(sol.get_value_list(dvars=self.v)).round().astype(dtype)
+        n_sol = np.array(sol.get_value_list(dvars=self.w)).round().astype(dtype)
 
         u_sol = []
-        for s in self.S:
+        for s in self.samples_range:
             u_sol.append(np.zeros(self.u[s].shape))
-            u_sol[s][self.reachable[s]] = np.array(sol.get_value_list(dvars=self.u[s][self.reachable[s]].flatten()))
+            u_sol[s][self.reachability_matrices[s]] = np.array(
+                sol.get_value_list(dvars=self.u[s][self.reachability_matrices[s]].flatten())
+            )
             u_sol[s] = u_sol[s].round().astype(dtype)
         # round needed for numerical stability (e.g. solution with 0.9999999999999999)
         return b_sol, n_sol, u_sol
@@ -414,7 +450,7 @@ class MOPTASolver:
         min_distance: float = MOPTA_CONSTANTS["min_distance"],
         counting_radius: float = MOPTA_CONSTANTS["counting_radius"],
     ):
-        distances = get_distance_matrix(improved_locations, self.L).min(axis=1)
+        distances = get_distance_matrix(improved_locations, self.coordinates_potential_cl).min(axis=1)
         build_mask = distances > min_distance
         too_close = np.argwhere(~build_mask).flatten()
 
@@ -430,7 +466,7 @@ class MOPTASolver:
 
             # compute number of chargers in radius and how many are in radius
 
-            distances_chargers = get_distance_matrix(improved_locations[too_close], self.L)
+            distances_chargers = get_distance_matrix(improved_locations[too_close], self.coordinates_potential_cl)
             number_locations_radius = (distances_chargers < counting_radius).sum(axis=1) * 2 * self.station_ub
 
             # compute probability of adding a new one location
@@ -446,7 +482,7 @@ class MOPTASolver:
             logger.debug(f"The probabilities for building of chargers that are too close to others are {prob}.")
             return improved_locations[build_mask], old_location_indices[build_mask]
 
-    def find_improved_locations(self, built_indices: np.ndarray, u_sol: List):
+    def find_improved_locations(self, built_indices: np.ndarray, u_sol: list):
         # create lists for improved locations and their old indices (used for warmstart)
         improved_locations = []
         location_indices = []
@@ -456,12 +492,12 @@ class MOPTASolver:
             # find allocated vehicles and their ranges
             X_allocated = []
             ranges_allocated = []
-            for s in self.S:
+            for s in self.samples_range:
                 indices_vehicles_s = np.argwhere(
                     u_sol[s][:, j] == 1
                 ).flatten()  # indices of allocated vehicles to specific charger
-                X_allocated.append(self.X[s][indices_vehicles_s])
-                ranges_allocated.append(self.R[s][indices_vehicles_s])
+                X_allocated.append(self.vehicle_locations_matrices[s][indices_vehicles_s])
+                ranges_allocated.append(self.ranges_arrays[s][indices_vehicles_s])
 
             # combine them
             X_allocated = np.vstack(X_allocated)  # combine all vehicle locations from the different samples
@@ -472,7 +508,7 @@ class MOPTASolver:
                 optimal_location = find_optimal_location(
                     allocated_locations=X_allocated, allocated_ranges=ranges_allocated
                 )
-                distance_old = np.linalg.norm(optimal_location - self.L[j])
+                distance_old = np.linalg.norm(optimal_location - self.coordinates_potential_cl[j])
                 # move slightly if really close to old chager
                 if distance_old < 10e-2:
                     optimal_location += np.random.normal(scale=0.3, size=2)
@@ -498,12 +534,14 @@ class MOPTASolver:
         if self.build_cost is None:  # then all of them are None
             self.build_cost = self.get_build_cost(K=K)
             self.maintenance_cost = self.get_maintenance_cost(K=K)
-            self.drive_charge_cost = sum(self.get_drive_charge_cost(s=s, K=K) for s in self.S)
-            self.fixed_charge_cost = sum(self.get_fixed_charge_cost(s=s) for s in self.S)  # independent of K
+            self.drive_charge_cost = sum(self.get_drive_charge_cost(s=s, K=K) for s in self.samples_range)
+            self.fixed_charge_cost = sum(
+                self.get_fixed_charge_cost(s=s) for s in self.samples_range
+            )  # independent of K
         else:
             self.build_cost += self.get_build_cost(K=K)
             self.maintenance_cost += self.get_maintenance_cost(K=K)
-            self.drive_charge_cost += sum(self.get_drive_charge_cost(s=s, K=K) for s in self.S)
+            self.drive_charge_cost += sum(self.get_drive_charge_cost(s=s, K=K) for s in self.samples_range)
 
         # set objective
         self.m.minimize(
@@ -522,18 +560,22 @@ class MOPTASolver:
             return False
 
     def update_distances_reachable(self, v: int, improved_locations: np.ndarray, K: Iterable):
-        for s in self.S:
-            self.D[s] = np.concatenate(
-                (self.D[s], get_distance_matrix(self.X[s], improved_locations)), axis=1
+        for s in self.samples_range:
+            self.distance_matrices[s] = np.concatenate(
+                (
+                    self.distance_matrices[s],
+                    get_distance_matrix(self.vehicle_locations_matrices[s], improved_locations),
+                ),
+                axis=1,
             )  # add new distances
-            new_reachable = np.array([self.D[s][i, k] <= self.R[s][i] for i in self.I[s] for k in K]).reshape(
-                self.l[s], v
-            )
-            self.reachable[s] = np.concatenate((self.reachable[s], new_reachable), axis=1)
+            new_reachable = np.array(
+                [self.distance_matrices[s][i, k] <= self.ranges_arrays[s][i] for i in self.I[s] for k in K]
+            ).reshape(self.n_vehicles_samples[s], v)
+            self.reachability_matrices[s] = np.concatenate((self.reachability_matrices[s], new_reachable), axis=1)
 
     def construct_mip_start(
         self,
-        u_sol: List,
+        u_sol: list,
         b_sol: np.ndarray,
         n_sol: np.ndarray,
         location_indices: np.ndarray,
@@ -544,8 +586,10 @@ class MOPTASolver:
         b_start = np.concatenate((b_sol, np.zeros(v, dtype=float)))
         n_start = np.concatenate((n_sol, np.zeros(v, dtype=float)))
         u_start = []
-        for s in self.S:
-            u_start.append(np.concatenate((u_sol[s], np.zeros((self.l[s], v), dtype=float)), axis=1, dtype=float))
+        for s in self.samples_range:
+            u_start.append(
+                np.concatenate((u_sol[s], np.zeros((self.n_vehicles_samples[s], v), dtype=float)), axis=1, dtype=float)
+            )
 
         # set new locations to built and copy their old n value
         b_start[K] = 1
@@ -554,13 +598,13 @@ class MOPTASolver:
         b_start[location_indices] = 0
         n_start[location_indices] = 0
         # update u
-        for s in self.S:
+        for s in self.samples_range:
             for k, j in enumerate(location_indices):
                 indices_vehicles = np.argwhere(u_sol[s][:, j] == 1).flatten()
                 for i in indices_vehicles:
                     u_start[s][i, j] = 0
                     u_start[s][i, K[k]] = 1
-                    if not self.reachable[s][i, K[k]]:
+                    if not self.reachability_matrices[s][i, K[k]]:
                         logger.warning(f"vehicle {i} cannot reach location {K[k]}")
 
         # check whether there are built locations that are empty
@@ -580,10 +624,10 @@ class MOPTASolver:
                     logger.warning("Built location with n=0.")
                     continue  # skip built locations with n=0, because b should be set to 0 then
 
-                mip_start.add_var_value(self.b[j], b_start[j])
-                mip_start.add_var_value(self.n[j], n_start[j])
-        for s in self.S:
-            for u_dv, u_val in zip(self.u[s][self.reachable[s]], u_start[s][self.reachable[s]]):
+                mip_start.add_var_value(self.v[j], b_start[j])
+                mip_start.add_var_value(self.w[j], n_start[j])
+        for s in self.samples_range:
+            for u_dv, u_val in zip(self.u[s][self.reachability_matrices[s]], u_start[s][self.reachability_matrices[s]]):
                 if u_val == 1:
                     mip_start.add_var_value(u_dv, u_val)
 
@@ -649,10 +693,9 @@ class MOPTASolver:
         Returns:
             None
         """
-        # method implementation
 
         # sanity check for at least the number of fixed locations
-        if self.fixed_station_number is not None and self.fixed_station_number > self.w:
+        if self.fixed_station_number is not None and self.fixed_station_number > self.n_potential_cl:
             raise ValueError(
                 "Number of fixed locations is larger than the number of available locations. "
                 "Please add more locations."
@@ -660,7 +703,8 @@ class MOPTASolver:
 
         # compute all maximum service levels to check for infeasibility
         max_service_levels = [
-            compute_maximum_matching(n=np.repeat(8, self.w), reachable=self.reachable[s]) for s in self.S
+            compute_maximum_matching(n=np.repeat(8, self.n_potential_cl), reachable=self.reachability_matrices[s])
+            for s in self.samples_range
         ]
         if min(max_service_levels) < self.service_level:
             raise ValueError(
@@ -788,17 +832,19 @@ class MOPTASolver:
             self.added_locations.append(filtered_improved_locations)
 
             # update problem
-            K = range(self.w, self.w + v)  # range for new locations
-            self.L = np.concatenate((self.L, filtered_improved_locations))  # update locations
+            K = range(self.n_potential_cl, self.n_potential_cl + v)  # range for new locations
+            self.coordinates_potential_cl = np.concatenate(
+                (self.coordinates_potential_cl, filtered_improved_locations)
+            )  # update locations
 
             # update distances and reachable
             self.update_distances_reachable(v=v, improved_locations=filtered_improved_locations, K=K)
 
             # Update number of locations and location range
-            self.w += v
-            self.J = range(self.w)
+            self.n_potential_cl += v
+            self.J = range(self.n_potential_cl)
             logger.info(
-                f"{len(filtered_improved_locations)} improved new locations found. There are now {self.w} locations."
+                f"{len(filtered_improved_locations)} improved new locations found. There are now {self.n_potential_cl} locations."
             )
 
             # update new decision variables
@@ -856,9 +902,10 @@ class MOPTASolver:
         # Always return the solution with the optimised locations (we don't vehiclee how close)
         # compute the best locations without filtering
         logger.info("Computing improved locations without filtering for minimum distance for current allocations.")
-        best_locations, _, _ = self.find_improved_locations(
+        locations_built, _, _ = self.find_improved_locations(
             built_indices=np.argwhere(b_start == 1).flatten(), u_sol=u_start
         )
+        v_sol_built = n_start[b_start == 1]
 
         logger.info(f"Optimization finished in {round(end_time - start_time, 2)} seconds.")
         logger.info(f"There are {b_start.sum()} built locations with in total {n_start.sum()} chargers.")
@@ -867,10 +914,15 @@ class MOPTASolver:
         mip_gap = self.m.solve_details.gap
         mip_gap_relative = self.m.solve_details.mip_relative_gap
 
-        return n_start[b_start == 1], best_locations, mip_gap, mip_gap_relative, iterations
+        return v_sol_built, locations_built, mip_gap, mip_gap_relative, iterations
 
     def allocation_problem(
-        self, L_sol: np.ndarray, n_sol: np.ndarray, verbose: bool = False, n_iter: int = 50, timelimit: int = 60
+        self,
+        locations_built: np.ndarray,
+        v_sol_built: np.ndarray,
+        verbose: bool = False,
+        n_iter: int = 50,
+        timelimit: int = 60,
     ):
         # initialize model
         objective_values = []  # objective values of all solutions
@@ -879,9 +931,11 @@ class MOPTASolver:
         service_levels = []  # service levels of all solutions
         mip_gaps = []  # mip gaps of all solutions
 
-        build_maintenance_term = self.maintenance_cost_param * np.sum(n_sol) + self.build_cost_param * len(n_sol)
+        build_maintenance_term = self.maintenance_cost_param * np.sum(v_sol_built) + self.build_cost_param * len(
+            v_sol_built
+        )
 
-        w = len(L_sol)
+        w = len(locations_built)
         J = range(w)
         logger.info(f"Starting allocation problem with {n_iter} iterations.")
 
@@ -914,12 +968,12 @@ class MOPTASolver:
             # filter for vehicles that are charging
             ranges = ranges[charging]
             locations = self.vehicle_locations[charging]
-            distances = get_distance_matrix(locations, L_sol)
+            distances = get_distance_matrix(locations, locations_built)
             reachable = (distances.T <= ranges).T
 
             # compute attainable service level
             logger.debug("  - Checking what service level is attainable.")
-            attainable_service_level = compute_maximum_matching(n=n_sol, reachable=reachable)
+            attainable_service_level = compute_maximum_matching(n=v_sol_built, reachable=reachable)
             service_level = (
                 self.service_level if attainable_service_level >= self.service_level else attainable_service_level
             )
@@ -950,7 +1004,7 @@ class MOPTASolver:
 
             logger.debug("  - Setting the 2 * n constraints.")
             m_a.add_constraints(
-                (m_a.sum(u_reachable[i, j] for i in I) <= 2 * n_sol[j] for j in J)
+                (m_a.sum(u_reachable[i, j] for i in I) <= 2 * v_sol_built[j] for j in J)
             )  # allocated up to 2n
 
             logger.debug(f"  - Setting the service level constraint to {round(service_level * 100, 2)}%.")

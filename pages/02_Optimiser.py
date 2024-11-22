@@ -246,7 +246,13 @@ def streamlit_update(solver: MOPTASolver):
     df_vehicle_locations_iterations = pd.concat([df_vehicle_locations_iterations, new_df_vehicle_locations])
 
     # update charger locations
-    new_df_chargers = pd.DataFrame({"x": solver.L[:, 0], "y": solver.L[:, 1], "#Chargers": n_sol})
+    new_df_chargers = pd.DataFrame(
+        {
+            "x": solver.coordinates_potential_cl[:, 0],
+            "y": solver.coordinates_potential_cl[:, 1],
+            "#Chargers": n_sol,
+        }
+    )
     new_df_chargers["Type"] = np.where(b_sol == 1, CHARGER_BUILT_NAME, CHARGER_NOT_BUILT_NAME)
     new_df_chargers["Iteration"] = n_iterations
     # concatenate to the existing df
@@ -396,8 +402,8 @@ if start_optimiser:
             with st.spinner("Validating solution..."):
                 objective_values, build_cost, distance_cost, service_levels, mip_gaps = mopta_solver.allocation_problem(
                     n_iter=validate_iterations,
-                    L_sol=L,
-                    n_sol=n,
+                    locations_built=L,
+                    v_sol_built=n,
                     verbose=False,
                 )
             # Add validation results to session state
