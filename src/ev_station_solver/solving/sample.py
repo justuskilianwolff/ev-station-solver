@@ -18,7 +18,6 @@ class Sample:
         distance_matrix: np.ndarray,
     ):
         self.vehicle_locations: np.ndarray = vehicle_locations
-
         self.n_vehicles: int = vehicle_locations.shape[0]  # list of number of vehicles in sample
         self.I: range = range(self.n_vehicles)  # indices of vehicles in sample
         self.ranges: np.ndarray = ranges  # numpy 1D array of ranges of vehicles in sample
@@ -39,8 +38,7 @@ class Sample:
         vehicle_locations = total_vehicle_locations[charging]
         ranges = ranges[charging]
 
-        distance_matrix = get_distance_matrix(
-            total_vehicle_locations, coordinates_potential_cl
-        )  # distance matrix of vehicles to cl
+        # distance matrix of vehicles to cl
+        distance_matrix = get_distance_matrix(vehicle_locations, coordinates_potential_cl)
 
         return cls(vehicle_locations, ranges, distance_matrix)
