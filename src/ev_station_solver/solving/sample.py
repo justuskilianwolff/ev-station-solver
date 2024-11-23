@@ -11,39 +11,22 @@ from ev_station_solver.stochastic_functions import (
 
 
 class Sample:
-    def __init__(
-        self,
-        index: int,
-        vehicle_locations: np.ndarray,
-        ranges: np.ndarray,
-        distance_matrix: np.ndarray,
-    ):
-        self.index = index
-        self.vehicle_locations: np.ndarray = vehicle_locations
-        self.n_vehicles: int = vehicle_locations.shape[0]  # list of number of vehicles in sample
-        self.I: range = range(self.n_vehicles)  # indices of vehicles in sample
-        self.ranges: np.ndarray = ranges  # numpy 1D array of ranges of vehicles in sample
-        self.distance_matrix: np.ndarray = distance_matrix  # distance matrix of vehicles in sample to cl
-        self.reachable: np.ndarray = (
-            self.distance_matrix.T <= self.ranges
-        ).T  # reachabilitye matrix of vehicles in sample
-
-    @classmethod
-    def create_sample(cls, index: int, total_vehicle_locations: np.ndarray, coordinates_potential_cl: np.ndarray):
+    def __init__(self, index: int, total_vehicle_locations: np.ndarray, coordinates_potential_cl: np.ndarray):
         ranges = generate_ranges(num=total_vehicle_locations.shape[0])  # ranges for each car
         charging_prob = ev_charging_probabilities(ranges=ranges)  # probability of charging for each car
-        charging = ev_charging(
-            ranges=ranges, charging_probabilites=charging_prob
-        )  # binary mask of whether car is charging or not
-
-        # mask with binary values of whether car is charging or not
-        vehicle_locations = total_vehicle_locations[charging]
-        ranges = ranges[charging]
+        # binary mask of whether car is charging or not
+        charging = ev_charging(ranges=ranges, charging_probabilites=charging_prob)
 
         # distance matrix of vehicles to cl
-        distance_matrix = get_distance_matrix(vehicle_locations, coordinates_potential_cl)
-
-        return cls(index, vehicle_locations, ranges, distance_matrix)
+        self.index = index
+        self.vehicle_locations: np.ndarray = total_vehicle_locations[charging]
+        self.ranges: np.ndarray = ranges[charging]  # numpy 1D array of ranges of vehicles in sample
+        self.n_vehicles: int = self.vehicle_locations.shape[0]  # list of number of vehicles in sample
+        self.I: range = range(self.n_vehicles)  # indices of vehicles in sample
+        # distance matrix of vehicles in sample to cl
+        self.distance_matrix: np.ndarray = get_distance_matrix(self.vehicle_locations, coordinates_potential_cl)
+        # reachabilitye matrix of vehicles in sample
+        self.reachable: np.ndarray = (self.distance_matrix.T <= self.ranges).T
 
     def __str__(self) -> str:
         return str(self.index)

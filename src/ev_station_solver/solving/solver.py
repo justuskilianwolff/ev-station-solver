@@ -4,12 +4,12 @@ from typing import Callable, Literal, Optional
 
 import numpy as np
 from docplex.mp.model import Model
-from docplex.mp.solution import SolveSolution
 from k_means_constrained import KMeansConstrained
 from sklearn.cluster import KMeans
 from tqdm import tqdm
 
 from ev_station_solver.constants import MOPTA_CONSTANTS
+from ev_station_solver.errors import IntegerInfeasible
 from ev_station_solver.helper_functions import (
     compute_maximum_matching,
     get_distance_matrix,
@@ -18,6 +18,7 @@ from ev_station_solver.helper_functions import (
 from ev_station_solver.location_improvement import find_optimal_location
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.sample import Sample
+from ev_station_solver.solving.solution import Solution
 
 # create logger
 logger = get_logger(__name__)
@@ -102,10 +103,10 @@ class Solver:
         self.drive_charge_cost_param = charge_cost + drive_cost  # drive + charge cost
 
         # objective terms (later add terms)
-        self.build_cost = None
-        self.maintenance_cost = None
-        self.drive_charge_cost = None
-        self.fixed_charge_cost = None
+        self.build_cost = 0
+        self.maintenance_cost = 0
+        self.drive_charge_cost = 0
+        self.fixed_charge_cost = 0
 
         # constraints #TODO: update docstrings
         self.fixed_station_number = fixed_station_number  # fixed number of stations
@@ -126,9 +127,7 @@ class Solver:
         self.kpi_total = None
 
         # solutions for each iteration
-        self.solutions = []  # tuples of (b_sol, n_sol, u_sol)
-        self.objective_values = [np.inf]
-        self.added_locations = []  # list of lists of the added locations per iteration
+        self.solutions: list[Solution] = []  # tuples of (b_sol, n_sol, u_sol)
 
         # streamlit
         self.streamlit_callback = streamlit_callback  # callback function for streamlit
@@ -197,7 +196,7 @@ class Solver:
             if self.coordinates_potential_cl is None:
                 raise Exception("Please add initial locations before adding samples.")
 
-            sample = Sample.create_sample(
+            sample = Sample(
                 index=len(self.S),
                 total_vehicle_locations=self.vehicle_locations,
                 coordinates_potential_cl=self.coordinates_potential_cl,
@@ -216,24 +215,244 @@ class Solver:
 
         logger.info(f"Added {num} samples. Total number of samples: {len(self.S)}.")
 
-    def initialize_model(self):
-        # check that samples have been added
-        if len(self.S) == 0:
-            raise ValueError("No samples have been added. Please add samples before solving the model.")
+    def solve(
+        self,
+        epsilon_stable: float = 10e-2,
+        counting_radius: float = MOPTA_CONSTANTS["counting_radius"],
+        min_distance: float = MOPTA_CONSTANTS["min_distance"],
+        timelimit: float = 10,
+        verbose: bool = False,
+    ):
+        """
+        Solves the optimization problem for EV charger placement.
 
-        # create decision variables
-        logger.info("Creating decision variables...")
-        self.add_new_decision_variables(K=self.J)
+        Parameters:
+            epsilon_stable (float): The threshold for determining stability of the solution. Defaults to 10e-2.
+            counting_radius (float): The radius within which locations are counted. Defaults to MOPTA_CONSTANTS["counting_radius"].
+            min_distance (float): The minimum distance between built and not built locations. Defaults to MOPTA_CONSTANTS["min_distance"].
+            timelimit (float): the maximum allowable time in seconds between successive solutions in the branch-and-cut tree. Defaults to 0.5s
+            verbose (bool): Whether to log detailed output during the optimization routine. Defaults to False.
 
-        # add constraints
-        logger.info("Creating constraints...")
-        self.update_constraints(K=self.J)
+        Raises:
+            ValueError: If the number of fixed locations is larger than the number of available locations.
+            ValueError: If the service level cannot be reached with the given number of locations.
+            ValueError: If the model is infeasible.
 
-        logger.info("Model is initialized.")
+        Returns:
+            None
+        """
+
+        # sanity check for at least the number of fixed locations #TODO check
+        if self.fixed_station_number is not None and self.fixed_station_number > self.n_potential_cl:
+            raise ValueError(
+                "Number of fixed locations is larger than the number of available locations. "
+                "Please add more locations."
+            )
+
+        # compute all maximum service levels to check for infeasibility
+        # if one is below the minimum sla then raise
+        max_service_levels = [
+            compute_maximum_matching(n=np.repeat(self.station_ub, self.n_potential_cl), reachable=s.reachable)
+            for s in self.S
+        ]
+        if min(max_service_levels) < self.service_level:
+            raise ValueError(
+                "Service level cannot be attained with the given number of locations. Please add more locations."
+            )
+
+        logger.debug(f"Maximum service levels for samples: {max_service_levels}")
+
+        # set solve parameters for cplex
+        self.m.parameters.preprocessing.presolve = 0  # turn presolve off to avoid issues after lcoation improvement
+        self.m.parameters.mip.limits.solutions = 1  # stop after every found solution
+
+        # monitor number of iterations
+        n_outer_iterations = 0
+        # start the optimization routine
+        logger.info("Starting the optimization routine.")
+        # monitor time
+        start_time = time.time()
+        K = self.J  # fist K is J
+
+        while True:
+            # update iterations number
+            n_outer_iterations += 1
+
+            # update the model
+            self.add_new_decision_variables(K=K)
+            self.update_constraints(K=K)
+            self.update_objective(K=K)
+            self.update_kpis()
+
+            # TODO: where do we update the objective values?
+
+            # set timelimit per improvement iteration for future solves
+            # This while loop runs until either
+            # - the objective value does not increase
+            # - no improved location is found
+
+            # count inner iterations for logging and potential future improvement tracking
+            n_inner_iterations = 0
+            b_start_defined = False
+
+            # start improving the current potential cl with our heuristic
+            while True:  # run the inner loop while improvement between solutions is good enough
+                # optimise the model without a time limit to get a feasible starting solution for first iteration
+                if (n_outer_iterations > 1) and (timelimit is not None):
+                    self.m.parameters.timelimit.set(timelimit)
+
+                # get current objective value
+                current_objective_value = self.m.objective_value
+                sol = self.m.solve(log_output=verbose, clean_before_solve=False)
+
+                # get status
+                status = self.m.solve_details.status
+
+                if status == "integer infeasible":
+                    raise IntegerInfeasible
+
+                n_inner_iterations += 1  # TODO: move somewehre
+
+                if status == "solution limit exceeded":
+                    new_objective_value = (
+                        self.m.objective_value
+                    )  # objective value of found solution #TODO: whats the difference between the two objw values?
+
+                    # new solution was found (not necesarily better) -> keep going
+                    improvement = round(
+                        current_objective_value - new_objective_value, 2
+                    )  # improvement in objective value
+
+                    logger.debug(f"Solution found, which is ${improvement} better. Continue with the next iteration.")
+
+                    # logging all 4 iterations
+                    if n_inner_iterations % 4 == 0:
+                        logger.info(
+                            f"Solver is improving the solution. Current objective value: ${round(new_objective_value, 2)}"
+                        )
+                    # keep going since the solution limit was exceeded
+                    continue
+
+                elif status == "time limit exceeded":
+                    # Since no improvement was found in the set time we continue with the location improvement
+                    logger.info("Time limit exceeded. Continue with location improvement.")
+                    break
+
+                elif status == "integer optimal, tolerance":
+                    # if an optimal solution is found we can proceed with the location improvement
+                    logger.info("Optimal solution found. Continue with location improvement.")
+                    break
+                else:
+                    raise Exception(f"Solve ended with status: {status}")
+
+            # extract current solution
+            sol.name = "CPLEX solution"  # name solution for KPI reporting #TODO: maybe use 'solution n_iter'
+            solution = Solution(v=self.v, w=self.w, sol=sol)  # Extend
+            self.solutions.append(solution)  # append solution vectors to list of solutions
+
+            # if a streamlit callback function was added -> call it
+            if self.streamlit_callback is not None:
+                self.streamlit_callback(self)
+
+            # determine which stations are built to improve their location
+            built_indices, not_built_indices = get_indice_sets_stations(b_sol)
+            logger.debug(f"There are {len(built_indices)} built and {len(not_built_indices)} not built locations.")
+            # compute for every built location its best location. Return that location and its indice
+            improved_locations, location_indices, empty_indices = self.find_improved_locations(
+                built_indices=built_indices, u_sol=u_sol
+            )
+
+            # filter locations that are built within a distance of a not built location
+            filtered_improved_locations, filtered_old_indices = self.filter_locations(
+                improved_locations=improved_locations,
+                old_location_indices=location_indices,
+                min_distance=min_distance,
+                counting_radius=counting_radius,
+            )
+
+            # if no new locations found
+            v = len(filtered_improved_locations)
+            if v == 0:
+                logger.info("No new locations found -> stopping the optimization routine.")
+                break
+
+            # add improved locations
+            self.added_locations.append(filtered_improved_locations)
+
+            # update problem
+            K = range(self.n_potential_cl, self.n_potential_cl + v)  # range for new locations
+            self.coordinates_potential_cl = np.concatenate(
+                (self.coordinates_potential_cl, filtered_improved_locations)
+            )  # update locations
+
+            # update distances and reachable
+            self.update_distances_reachable(v=v, improved_locations=filtered_improved_locations, K=K)
+
+            # Update number of locations and location range
+            self.n_potential_cl += v
+            self.J = range(self.n_potential_cl)
+            logger.info(
+                f"{len(filtered_improved_locations)} improved new locations found. There are now {self.n_potential_cl} locations."
+            )
+
+            # generate new mip start
+            # generate start vector for new solution
+            mip_start, b_start, n_start, u_start = self.construct_mip_start(
+                u_sol=u_sol,
+                b_sol=b_sol,
+                n_sol=n_sol,
+                location_indices=filtered_old_indices,
+                empty_indices=empty_indices,
+                v=v,
+                K=K,
+            )
+
+            b_start_defined = True
+            # Add mipstart
+            self.m.add_mip_start(mip_start, complete_vars=True, effort_level=4, write_level=3)
+            # report both solutions
+            self.report_kpis(solution=sol)
+            self.report_kpis(solution=mip_start)
+
+            # check if solution is stable -> There was no improvement compare to the last iteration
+            # If it is stop the algorithm
+            if self.check_stable(epsilon=epsilon_stable, warmstart=mip_start):
+                logger.info("Solution is stable -> stopping the optimization routine.")
+                break
+        self.build_cost_sol = self.maintenance_cost_param * np.sum(n_sol) + self.build_cost_param * np.sum(b_sol)
+        self.drive_cost_sol = (
+            self.objective_values[-1] - 365 / len(self.S) * self.fixed_charge_cost - self.build_cost_sol
+        )
+        # clear model to free resources
+        self.m.end()
+
+        # cast b_start and n_start to int since they are not longer needed to be floats for warmstarts
+        b_start = b_start.astype("int")
+        n_start = n_start.astype("int")
+
+        end_time = time.time()
+
+        # Always return the solution with the optimised locations (we don't vehiclee how close)
+        # compute the best locations without filtering
+        logger.info("Computing improved locations without filtering for minimum distance for current allocations.")
+        locations_built, _, _ = self.find_improved_locations(
+            built_indices=np.argwhere(b_start == 1).flatten(), u_sol=u_start
+        )
+        v_sol_built = n_start[b_start == 1]
+
+        logger.info(f"Optimization finished in {round(end_time - start_time, 2)} seconds.")
+        logger.info(f"There are {b_start.sum()} built locations with in total {n_start.sum()} chargers.")
+
+        # obtain mip gaps
+        mip_gap = self.m.solve_details.gap
+        mip_gap_relative = self.m.solve_details.mip_relative_gap
+
+        return v_sol_built, locations_built, mip_gap, mip_gap_relative, n_outer_iterations
 
     def add_new_decision_variables(self, K: range):
         # logger.debug(f"We add {2 * len(K)} variables for b and n.")
         # setting new deicison variables for new potential cl
+        logger.info("Adding new decision variables...")
 
         self.add_new_dv_v(K=K)
         self.add_new_dv_w(K=K)
@@ -264,6 +483,7 @@ class Solver:
         self.u[s.index] = np.concatenate((self.u[s.index], created_u_s), axis=1)
 
     def update_constraints(self, K: range) -> None:
+        logger.info("Adding constraints...")
         if self.fixed_station_number is not None:
             self.update_fixed_station_number_constraint(K=K)
 
@@ -342,37 +562,65 @@ class Solver:
             else:
                 self.allocation_constraints[s.index][i] = constraint.left_expr.add(left_sum_K)
 
-    def get_build_cost(self, K: range):
-        return self.build_cost_param * self.m.sum(self.v[k] for k in K)
+    def update_objective(self, K: range):
+        self.add_to_build_cost(K=K)
+        self.add_to_maintenance_cost(K=K)
+        self.add_to_drive_charge_cost(K=K)
 
-    def get_maintenance_cost(self, K: range):
-        return self.maintenance_cost_param * self.m.sum(self.w[k] for k in K)
+        # set objective
+        self.m.minimize(
+            self.build_cost
+            + self.maintenance_cost
+            + 365 / len(self.S) * self.drive_charge_cost
+            + 365 / len(self.S) * self.fixed_charge_cost
+        )
+        logger.debug("Objective set.")
 
-    def get_drive_charge_cost(self, s: int, K: range):
+    def set_fixed_charge_cost(self):  # TODO: make sure this is actually called
+        self.fixed_charge_cost = sum(self.get_fixed_charge_cost(s=s) for s in self.S)  # independent of K
+
+    def get_fixed_charge_cost(self, s: Sample):
+        return self.charge_cost_param * (250 - s.ranges).sum()
+
+    def add_to_build_cost(self, K: range):
+        self.build_cost += self.build_cost_param * self.m.sum(self.v[k] for k in K)
+
+    def add_to_maintenance_cost(self, K: range):
+        self.maintenance_cost += self.maintenance_cost_param * self.m.sum(self.w[k] for k in K)
+
+    def add_to_drive_charge_cost(self, K: range):
+        self.drive_charge_cost += sum(self.get_drive_charge_cost(s=s, K=K) for s in self.S)
+
+    def get_drive_charge_cost(self, s: Sample, K: range):
         return self.drive_charge_cost_param * self.m.sum(
-            self.u[s][i, k] * self.S[s].distance_matrix[i, k]
-            for i in self.S[s].I
-            for k in K
-            if self.S[s].reachable[i, k]
+            self.u[s.index][i, k] * s.distance_matrix[i, k] for i in s.I for k in K if s.reachable[i, k]
         )
 
-    def get_fixed_charge_cost(self, s: int):
-        return self.charge_cost_param * (250 - self.S[s].ranges).sum()
+    def update_kpis(self):
+        # clear all kpis
+        self.m.clear_kpis()
 
-    def extract_solution(self, sol: SolveSolution, dtype=float):
-        logger.info("Extracting solution.")
-        b_sol = np.array(sol.get_value_list(dvars=self.v)).round().astype(dtype)
-        n_sol = np.array(sol.get_value_list(dvars=self.w)).round().astype(dtype)
+        # add new kpis
+        self.kpi_total = self.m.add_kpi(
+            self.build_cost
+            + self.maintenance_cost
+            + 365 / len(self.S) * self.drive_charge_cost
+            + 365 / len(self.S) * self.fixed_charge_cost,
+            "total_cost",
+        )
+        self.kpi_build = self.m.add_kpi(self.build_cost, "build_cost")
+        self.kpi_maintenance = self.m.add_kpi(self.maintenance_cost, "maintenance_cost")
+        self.kpi_drive_charge = self.m.add_kpi(365 / len(self.S) * self.drive_charge_cost, "drive_charge_cost")
+        self.kpi_fixed_charge = self.m.add_kpi(365 / len(self.S) * self.fixed_charge_cost, "fixed_charge_cost")
 
-        u_sol = []
-        for s in self.S_range:
-            u_sol.append(np.zeros(self.u[s].shape))
-            u_sol[s][self.S[s].reachability_matrix[i, k]] = np.array(
-                sol.get_value_list(dvars=self.u[s][self.S[s].reachability_matrix[i, k]].flatten())
-            )
-            u_sol[s] = u_sol[s].round().astype(dtype)
-        # round needed for numerical stability (e.g. solution with 0.9999999999999999)
-        return b_sol, n_sol, u_sol
+        logger.debug("KPIs set.")
+
+    def report_kpis(self, solution):
+        logger.info(f"KPIs {solution.name}:")
+
+        for kpi in self.m.iter_kpis():
+            print(kpi)  # TODO: check
+            logger.info(f"  - {kpi}: {round(self.m.kpi_value_by_name(name=kpi, solution=solution), 2)}")
 
     def filter_locations(
         self,
@@ -456,30 +704,6 @@ class Solver:
         empty_indices = np.array(empty_indices)
 
         return improved_locations, location_indices, empty_indices
-
-    def set_objective(self, K: range):
-        # sanity check: all of them are None or all of them are not None
-        if (self.build_cost is None) != (self.maintenance_cost is None) != (self.drive_charge_cost is None):
-            raise ValueError("All of build_cost, maintenance_cost and drive_charge_cost must be None or not None.")
-
-        if self.build_cost is None:  # then all of them are None
-            self.build_cost = self.get_build_cost(K=K)
-            self.maintenance_cost = self.get_maintenance_cost(K=K)
-            self.drive_charge_cost = sum(self.get_drive_charge_cost(s=s, K=K) for s in self.S_range)
-            self.fixed_charge_cost = sum(self.get_fixed_charge_cost(s=s) for s in self.S_range)  # independent of K
-        else:
-            self.build_cost += self.get_build_cost(K=K)
-            self.maintenance_cost += self.get_maintenance_cost(K=K)
-            self.drive_charge_cost += sum(self.get_drive_charge_cost(s=s, K=K) for s in self.S_range)
-
-        # set objective
-        self.m.minimize(
-            self.build_cost
-            + self.maintenance_cost
-            + 365 / self.n_samples * self.drive_charge_cost
-            + 365 / self.n_samples * self.fixed_charge_cost
-        )
-        logger.debug("Objective set.")
 
     def check_stable(self, warmstart, epsilon: float = 10e-2):
         objective_warmstart = self.m.kpi_value_by_name(name="total_cost", solution=warmstart)
@@ -566,289 +790,6 @@ class Solver:
                     mip_start.add_var_value(u_dv, u_val)
 
         return mip_start, b_start, n_start, u_start
-
-    def set_kpis(self):
-        if self.kpi_total is not None:
-            self.m.remove_kpi(self.kpi_total)
-        if self.kpi_build is not None:
-            self.m.remove_kpi(self.kpi_build)
-        if self.kpi_maintenance is not None:
-            self.m.remove_kpi(self.kpi_maintenance)
-        if self.kpi_drive_charge is not None:
-            self.m.remove_kpi(self.kpi_drive_charge)
-        if self.kpi_fixed_charge is not None:
-            self.m.remove_kpi(self.kpi_fixed_charge)
-
-        # add new kpis
-        self.kpi_total = self.m.add_kpi(
-            self.build_cost
-            + self.maintenance_cost
-            + 365 / self.n_samples * self.drive_charge_cost
-            + 365 / self.n_samples * self.fixed_charge_cost,
-            "total_cost",
-        )
-        self.kpi_build = self.m.add_kpi(self.build_cost, "build_cost")
-        self.kpi_maintenance = self.m.add_kpi(self.maintenance_cost, "maintenance_cost")
-        self.kpi_drive_charge = self.m.add_kpi(365 / self.n_samples * self.drive_charge_cost, "drive_charge_cost")
-        self.kpi_fixed_charge = self.m.add_kpi(365 / self.n_samples * self.fixed_charge_cost, "fixed_charge_cost")
-
-        logger.debug("KPIs set.")
-
-    def report_kpis(
-        self, solution, kpis=["total_cost", "fixed_charge_cost", "build_cost", "maintenance_cost", "drive_charge_cost"]
-    ):
-        logger.info(f"KPIs {solution.name}:")
-        for kpi in kpis:
-            logger.info(f"  - {kpi}: {round(self.m.kpi_value_by_name(name=kpi, solution=solution), 2)}")
-
-    def solve(
-        self,
-        epsilon_stable: float = 10e-2,
-        counting_radius: float = MOPTA_CONSTANTS["counting_radius"],
-        min_distance: float = MOPTA_CONSTANTS["min_distance"],
-        timelimit: float = 10,
-        verbose: bool = False,
-    ):
-        """
-        Solves the optimization problem for EV charger placement.
-
-        Parameters:
-            epsilon_stable (float): The threshold for determining stability of the solution. Defaults to 10e-2.
-            counting_radius (float): The radius within which locations are counted. Defaults to MOPTA_CONSTANTS["counting_radius"].
-            min_distance (float): The minimum distance between built and not built locations. Defaults to MOPTA_CONSTANTS["min_distance"].
-            timelimit (float): the maximum allowable time in seconds between successive solutions in the branch-and-cut tree. Defaults to 0.5s
-            verbose (bool): Whether to log detailed output during the optimization routine. Defaults to False.
-
-        Raises:
-            ValueError: If the number of fixed locations is larger than the number of available locations.
-            ValueError: If the service level cannot be reached with the given number of locations.
-            ValueError: If the model is infeasible.
-
-        Returns:
-            None
-        """
-
-        # sanity check for at least the number of fixed locations
-        if self.fixed_station_number is not None and self.fixed_station_number > self.n_potential_cl:
-            raise ValueError(
-                "Number of fixed locations is larger than the number of available locations. "
-                "Please add more locations."
-            )
-
-        # compute all maximum service levels to check for infeasibility
-        max_service_levels = [
-            compute_maximum_matching(n=np.repeat(8, self.n_potential_cl), reachable=self.S[s].reachability_matrix[i, k])
-            for s in self.S_range
-        ]
-        if min(max_service_levels) < self.service_level:
-            raise ValueError(
-                "Service level cannot be reached with the given number of locations. " "Please add more locations."
-            )
-        logger.debug(f"Maximum service levels for samples: {max_service_levels}")
-
-        # monitor time
-        start_time = time.time()
-
-        # monitor number of iterations
-        iterations = 0
-
-        # initialize model, set objective and kpi's
-        self.initialize_model()
-        self.set_objective(K=self.J)
-        self.set_kpis()
-
-        # set solve parameters
-        self.m.parameters.preprocessing.presolve = 0  # turn presolve off to avoid issues after lcoation improvement
-        self.m.parameters.mip.limits.solutions = 1  # stop after every found solution
-
-        # start the optimization routine
-        logger.info("Starting the optimization routine.")
-        # optimise the model without a time limit to get a feasible starting solution
-        sol = self.m.solve(log_output=verbose, clean_before_solve=False)
-        if self.m.solve_details.status == "integer infeasible":
-            raise ValueError(
-                "Model is infeasible. Please add more initial locations and / or "
-                "increase fixed number of chargers (if fixed)."
-            )
-
-        # If it is feasible, then solution is found and we can continue from there
-        logger.info("First feasible solution is found.")
-
-        # set timelimit per improvement iteration for future solves
-        if timelimit is not None:
-            self.m.parameters.timelimit.set(timelimit)
-
-        while True:
-            # This while loop runs until either
-            # - the objective value does not increase
-            # - no improved location is found
-
-            # update iterations
-            iterations += 1
-
-            # count inner iterations for logging and potential future improvement tracking
-            inner_iteration_counter = 0
-            b_start_defined = False
-            while True:  # run this while improvement is good enough
-                inner_iteration_counter += 1
-                old_objective_value = sol.objective_value  # get the value of the current solution
-
-                # solve the model and get the status of the solution
-                sol = self.m.solve(log_output=verbose, clean_before_solve=False)
-                status = self.m.solve_details.status  # status of the solution
-                obj_value = self.m.objective_value  # objective value of found solution
-
-                if status == "solution limit exceeded":
-                    improvement = round(old_objective_value - obj_value, 2)  # improvement in objective value
-
-                    logger.debug(f"Solution found, which is ${improvement} better. Continue with the next iteration.")
-
-                    # logg infor all 4 iterations
-                    if inner_iteration_counter % 4 == 0:
-                        logger.info(f"Improving the current solution. Current objective value: ${round(obj_value, 2)}")
-                    # keep going since the solution limit was exceeded
-                    continue
-
-                # if the model is infeasible then most likely the service level is too high for current locations
-                # -> add more locations
-                elif status == "integer infeasible":
-                    raise ValueError(
-                        "Model is infeasible. Please add more initial locations and / or "
-                        "increase fixed number of chargers (if fixed)."
-                    )
-
-                elif status == "time limit exceeded":
-                    # Since no improvement was found in the set time we continue with the location improvement
-                    logger.info("Time limit exceeded. Continue with location improvement.")
-                    break
-
-                elif status == "integer optimal, tolerance":
-                    # if an optimal solution is found we can proceed with the location improvement
-                    logger.info("Optimal solution found. Continue with location improvement.")
-                    break
-                else:
-                    logger.warning(f"Status: {status}.")
-                    break
-
-            # extract current solution
-            sol.name = "CPLEX solution"  # name solution for KPI reporting
-            b_sol, n_sol, u_sol = self.extract_solution(sol=sol, dtype=int)
-            self.solutions.append((b_sol, n_sol, u_sol))  # append solution vectors to list of solutions
-            self.objective_values.append(sol.objective_value)  # append objective value of current solution
-
-            # if a streamlit callback function was added -> call it
-            if self.streamlit_callback is not None:
-                self.streamlit_callback(self)
-
-            # determine which stations are built to improve their location
-            built_indices, not_built_indices = get_indice_sets_stations(b_sol)
-            logger.debug(f"There are {len(built_indices)} built and {len(not_built_indices)} not built locations.")
-            # compute for every built location its best location. Return that location and its indice
-            improved_locations, location_indices, empty_indices = self.find_improved_locations(
-                built_indices=built_indices, u_sol=u_sol
-            )
-
-            # filter locations that are built within a distance of a not built location
-            filtered_improved_locations, filtered_old_indices = self.filter_locations(
-                improved_locations=improved_locations,
-                old_location_indices=location_indices,
-                min_distance=min_distance,
-                counting_radius=counting_radius,
-            )
-
-            # if no new locations found
-            v = len(filtered_improved_locations)
-            if v == 0:
-                logger.info("No new locations found -> stopping the optimization routine.")
-                break
-
-            # add improved locations
-            self.added_locations.append(filtered_improved_locations)
-
-            # update problem
-            K = range(self.n_potential_cl, self.n_potential_cl + v)  # range for new locations
-            self.coordinates_potential_cl = np.concatenate(
-                (self.coordinates_potential_cl, filtered_improved_locations)
-            )  # update locations
-
-            # update distances and reachable
-            self.update_distances_reachable(v=v, improved_locations=filtered_improved_locations, K=K)
-
-            # Update number of locations and location range
-            self.n_potential_cl += v
-            self.J = range(self.n_potential_cl)
-            logger.info(
-                f"{len(filtered_improved_locations)} improved new locations found. There are now {self.n_potential_cl} locations."
-            )
-
-            # update new decision variables
-            logger.info("Updating decision variables.")
-            self.add_new_decision_variables(K=K)
-
-            # update the problem and resolve
-            logger.info("Updating constraints.")
-            self.update_constraints(K=K)
-
-            ## Update Objective Function Constituent Parts. Note that the charge_cost doesn't change
-            logger.info("Updating objective function.")
-            self.set_objective(K=K)
-
-            # update kpis
-            self.set_kpis()
-
-            # generate new mip start
-            # generate start vector for new solution
-            mip_start, b_start, n_start, u_start = self.construct_mip_start(
-                u_sol=u_sol,
-                b_sol=b_sol,
-                n_sol=n_sol,
-                location_indices=filtered_old_indices,
-                empty_indices=empty_indices,
-                v=v,
-                K=K,
-            )
-
-            b_start_defined = True
-            # Add mipstart
-            self.m.add_mip_start(mip_start, complete_vars=True, effort_level=4, write_level=3)
-            # report both solutions
-            self.report_kpis(solution=sol)
-            self.report_kpis(solution=mip_start)
-
-            # check if solution is stable -> There was no improvement compare to the last iteration
-            # If it is stop the algorithm
-            if self.check_stable(epsilon=epsilon_stable, warmstart=mip_start):
-                logger.info("Solution is stable -> stopping the optimization routine.")
-                break
-        self.build_cost_sol = self.maintenance_cost_param * np.sum(n_sol) + self.build_cost_param * np.sum(b_sol)
-        self.drive_cost_sol = (
-            self.objective_values[-1] - 365 / self.n_samples * self.fixed_charge_cost - self.build_cost_sol
-        )
-        # clear model to free resources
-        self.m.end()
-
-        # cast b_start and n_start to int since they are not longer needed to be floats for warmstarts
-        b_start = b_start.astype("int")
-        n_start = n_start.astype("int")
-
-        end_time = time.time()
-
-        # Always return the solution with the optimised locations (we don't vehiclee how close)
-        # compute the best locations without filtering
-        logger.info("Computing improved locations without filtering for minimum distance for current allocations.")
-        locations_built, _, _ = self.find_improved_locations(
-            built_indices=np.argwhere(b_start == 1).flatten(), u_sol=u_start
-        )
-        v_sol_built = n_start[b_start == 1]
-
-        logger.info(f"Optimization finished in {round(end_time - start_time, 2)} seconds.")
-        logger.info(f"There are {b_start.sum()} built locations with in total {n_start.sum()} chargers.")
-
-        # obtain mip gaps
-        mip_gap = self.m.solve_details.gap
-        mip_gap_relative = self.m.solve_details.mip_relative_gap
-
-        return v_sol_built, locations_built, mip_gap, mip_gap_relative, iterations
 
     def allocation_problem(
         self,
