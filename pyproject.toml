@@ -43,15 +43,29 @@ line-length = 120
 respect-gitignore = false
 src = ["src"]
 extend-include = ["*.ipynb"]
-exclude = [
-    "miscellaneous/autoencoders/schreyer/KDD_2019_Lab.ipynb",
-    ".venv",
-    "paper",
-]
+exclude = [".venv"]
 
 [tool.ruff.lint]
 extend-select = ["I"] # also sort imports etc
 ignore = ["E731"]     # ignore not using lambda functions
+
+[tool.pylint]
+disable = [
+    "C0103", # constants not upper case
+    "C0301", # line too long
+    "C0114", # missing module docstring
+    "W1203", # logger with f string formatting
+    "R0913", # too many arguments
+    "W0511", # fixme
+    "W0212", # accessing protected members
+    "R1720", # Unnecessary "elif" after "raise", remove the leading "el" from "elif" (has a better readibility though)
+    "R0914", # too many local variables
+    "R1705", # else after return (improves readibility imho)
+    "R0902", # too many instance attributes
+    "R0903", # too few public methods
+]
+ignore-paths = [".venv", "test[^_]*py"]
+recursive = "y"
 
 [tool.vulture]
 exclude = [".venv"]
