@@ -34,7 +34,7 @@ ch.setFormatter(formatter)
 logger.addHandler(ch)
 
 
-class MOPTASolver:
+class Solver:
     def __init__(
         self,
         vehicle_locations: np.ndarray,
