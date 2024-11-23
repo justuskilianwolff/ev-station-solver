@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Callable, Iterable, Literal, Optional, Tuple
+from typing import Callable, Iterable, Literal, Optional
 
 import numpy as np
 from docplex.mp.model import Model
@@ -16,22 +16,11 @@ from ev_station_solver.helper_functions import (
     get_indice_sets_stations,
 )
 from ev_station_solver.location_improvement import find_optimal_location
-from ev_station_solver.stochastic_functions import (
-    ev_charging,
-    ev_charging_probabilities,
-    generate_ranges,
-)
+from ev_station_solver.logging import get_logger
+from ev_station_solver.solving.sample import Sample
 
 # create logger
-logger = logging.getLogger(__name__)
-# create console handler and set level to debug
-ch = logging.StreamHandler()
-# create formatter
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-# add formatter to ch
-ch.setFormatter(formatter)
-# add ch to logger
-logger.addHandler(ch)
+logger = get_logger(__name__)
 
 
 class Solver:
@@ -69,7 +58,6 @@ class Solver:
         :param streamlit_callback: function to update streamlit user interface
         """
         logger.setLevel(level=loglevel)
-        ch.setLevel(level=loglevel)
 
         # Sanity checks:
         # vehicle locations are in R^2 and there are at least two vehicle locations
@@ -93,14 +81,15 @@ class Solver:
         self.y_max = np.max(self.vehicle_locations[:, 1])  # most up vehicle
 
         # Samples: generate all lists needed for samples
-        self.n_vehicles_samples: list = []  # list of number of vehicles in sample
-        self.I: list = []  # indices of vehicles in sample # TODO: find out what this is for
-        self.ranges_arrays: list = []  # numpy 1D array of ranges of vehicles in sample
-        self.distance_matrices: list = []  # distance matrix of vehicles in sample
-        self.reachability_matrices: list = []  # reachable matrix of vehicles in sample
-        self.vehicle_locations_matrices: list = []  # vehicle locations in sample
-        self.samples_range: Optional[range] = None  # indices of sample ()
-        self.n_samples: int = 0  # total number of samples
+        self.samples: list[Sample] = []
+        # self.n_vehicles_samples: list = []  # list of number of vehicles in sample
+        # self.I: list = []  # indices of vehicles in sample # TODO: find out what this is for
+        # self.ranges_arrays: list = []  # numpy 1D array of ranges of vehicles in sample
+        # self.distance_matrices: list = []  # distance matrix of vehicles in sample
+        # self.reachability_matrices: list = []  # reachable matrix of vehicles in sample
+        # self.vehicle_locations_matrices: list = []  # vehicle locations in sample
+        # self.samples_range: Optional[range] = None  # indices of sample ()
+        # self.n_samples: int = 0  # total number of samples
 
         # charging locations
         self.coordinates_potential_cl: Optional[np.ndarray] = None  # charging locations
@@ -108,7 +97,7 @@ class Solver:
         self.J = None  # indices of charging locations
 
         # model and decision variables
-        self.m = None  # docplex model
+        self.m = Model(name="Placement EV Chargers - Location Improvement", cts_by_name=True)  # docplex model
         self.v = None  # binary decision variables whether to build cl or not
         self.w = None  # integer decision variables how many to build at cl
         self.u = None  # binary decision variables for allocation per sample
@@ -209,16 +198,6 @@ class Solver:
         self.J = range(self.n_potential_cl)
         self.added_locations.append(self.coordinates_potential_cl)
 
-    def get_sample(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Get a sample of ranges, charging prob and charging (bool) for all vehicles.
-        :return: ranges, charging_probability and charging (bool)
-        """
-        ranges = generate_ranges(num=self.n_vehicles)
-        charging_prob = ev_charging_probabilities(ranges=ranges)
-        charging = ev_charging(ranges=ranges, charging_probabilites=charging_prob)
-        return ranges, charging_prob, charging
-
     def add_sample(self):
         """
         Adds a sample of charging values to the problem, which is used to optimise over.
@@ -228,30 +207,17 @@ class Solver:
         if self.coordinates_potential_cl is None:
             raise Exception("Please add initial locations before adding samples.")
 
-        # get sample
-        ranges, _, charging = self.get_sample()
+        sample = Sample.create_sample(
+            total_vehicle_locations=self.vehicle_locations,
+            coordinates_potential_cl=self.coordinates_potential_cl,
+        )
 
-        # mask vehicles that are actually charging
-        charging_vehicles = self.vehicle_locations[charging]
-        self.n_vehicles_samples.append(len(charging_vehicles))
-        self.I.append(range(len(charging_vehicles)))
-        self.ranges_arrays.append(ranges[charging])
-        self.distance_matrices.append(get_distance_matrix(charging_vehicles, self.coordinates_potential_cl))
-        self.reachability_matrices.append((self.distance_matrices[-1].T <= self.ranges_arrays[-1]).T)
-        self.vehicle_locations_matrices.append(charging_vehicles)
-
-        # Update sample sets and number of samples
-        if self.samples_range is None:
-            self.samples_range = range(1)
-            self.n_samples = 1
-        else:
-            self.samples_range = range(self.samples_range.stop + 1)  # update sample set
-            self.n_samples += 1
+        self.samples.append(sample)
 
     def add_samples(self, num: int):
         for _ in range(num):
             self.add_sample()
-        logger.info(f"Added {num} samples. Total number of samples: {self.n_samples}.")
+        logger.info(f"Added {num} samples. Total number of samples: {len(self.samples)}.")
 
     def create_dv_v(self, K: Iterable):  # TODO: check why K is used and not J ( also below)
         """
@@ -371,9 +337,6 @@ class Solver:
         # check that samples have been added
         if self.samples_range is None:
             raise ValueError("No samples have been added. Please add samples before solving the model.")
-
-        # intialise model
-        self.m = Model(name="MOPTA - Location Improvement", cts_by_name=True)
 
         # create decision variables
         logger.info("Creating decision variables...")
