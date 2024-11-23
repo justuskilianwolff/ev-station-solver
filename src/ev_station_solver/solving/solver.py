@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Callable, Iterable, Literal, Optional
+from typing import Callable, Literal, Optional
 
 import numpy as np
 from docplex.mp.model import Model
@@ -80,14 +80,13 @@ class Solver:
         self.y_min = np.min(self.vehicle_locations[:, 1])  # most down vehicle
         self.y_max = np.max(self.vehicle_locations[:, 1])  # most up vehicle
 
-        # Samples: generate all lists needed for samples
-        self.samples: list[Sample] = []
-        self.S: range = range(len(self.samples))
-
         # charging locations
         self.coordinates_potential_cl: np.ndarray = np.empty((0, 2))  # charging locations
         self.n_potential_cl: int = 0  # number of charging locations
         self.J = range(self.n_potential_cl)  # indices of potential charging locations
+
+        # Samples
+        self.S: list[Sample] = []
 
         # model and decision variables
         self.m = Model(name="Placement EV Chargers - Location Improvement", cts_by_name=True)  # docplex model
@@ -112,11 +111,11 @@ class Solver:
         self.fixed_station_number = fixed_station_number  # fixed number of stations
         self.service_level = service_level  # service level
         self.fixed_station_number_constraint = None  # fixed number of stations constraint
-        self.v_lt_w_constraints = []  # n only positive if also b positive
-        self.w_lt_mv_constraints = []  # b only positive if also n positive
-        self.max_queue_constraints = []  # max queue length constraints
-        self.allocation_constraints = []  # allocation constraints (allocated to up to one charging station)
-        self.service_constraints = []  # service constraints (at least XX% are serviced)
+        self.v_lt_w_constraints: list = []  # n only positive if also b positive
+        self.w_lt_mv_constraints: list = []  # b only positive if also n positive
+        self.max_queue_constraints: list = []  # max queue length constraints
+        self.service_constraints: list = []  # service constraints (at least XX% are serviced)
+        self.allocation_constraints: list[list] = []  # allocation constraints (allocated to up to one charging station)
 
         # kpis
         self.kpi_build = None
@@ -199,26 +198,27 @@ class Solver:
                 raise Exception("Please add initial locations before adding samples.")
 
             sample = Sample.create_sample(
+                index=len(self.S),
                 total_vehicle_locations=self.vehicle_locations,
                 coordinates_potential_cl=self.coordinates_potential_cl,
             )
 
             # append to samples
-            self.samples.append(sample)
-
-            # update S
-            self.S = range(len(self.samples))
+            self.S.append(sample)
 
             # create empty u decision variables
-            self.u.append(np.empty((0, sample.n_vehicles)))
+            self.u.append(np.empty((sample.n_vehicles, 0)))
+            # add empty list for allocation constraints
+            self.allocation_constraints.append([])
 
         for _ in range(num):
             add_sample()
-        logger.info(f"Added {num} samples. Total number of samples: {len(self.samples)}.")
+
+        logger.info(f"Added {num} samples. Total number of samples: {len(self.S)}.")
 
     def initialize_model(self):
         # check that samples have been added
-        if len(self.samples) == 0:
+        if len(self.S) == 0:
             raise ValueError("No samples have been added. Please add samples before solving the model.")
 
         # create decision variables
@@ -231,7 +231,7 @@ class Solver:
 
         logger.info("Model is initialized.")
 
-    def add_new_decision_variables(self, K: Iterable):
+    def add_new_decision_variables(self, K: range):
         # logger.debug(f"We add {2 * len(K)} variables for b and n.")
         # setting new deicison variables for new potential cl
 
@@ -240,59 +240,56 @@ class Solver:
         for s in self.S:
             self.add_new_dv_u_s(s=s, K=K)
 
-    def add_new_dv_v(self, K: Iterable) -> None:  # TODO: check why K is used and not J ( also below)
+    def add_new_dv_v(self, K: range) -> None:  # TODO: check why K is used and not J ( also below)
         """
         Create binary variables v_k for each location k in K
-        :param K: Iterable of (some) locations
+        :param K: range of (some) locations
         :return: b
         """
         self.v = np.append(self.v, np.array([self.m.binary_var(name=f"v_{k}") for k in K]))
 
-    def add_new_dv_w(self, K: Iterable) -> None:
+    def add_new_dv_w(self, K: range) -> None:
         """
         Create integer variables n_k for each location k in K
-        :param K: Iterable of (some) locations
+        :param K: range of (some) locations
         :return: n
         """
         self.w = np.append(self.w, np.array([self.m.integer_var(name=f"w_{k}") for k in K]))
 
-    def add_new_dv_u_s(self, s: int, K: Iterable):
+    def add_new_dv_u_s(self, s: Sample, K: range):
         created_u_s = np.array(
-            [
-                self.m.binary_var(name=f"u_{s}_{i}_{k}") if self.samples[s].reachability_matrix[i, k] else 0
-                for i in self.samples[s].I
-                for k in K
-            ]
+            [self.m.binary_var(name=f"u_{s}_{i}_{k}") if s.reachable[i, k] else 0 for i in s.I for k in K]
         )
-        created_u_s = created_u_s.reshape(self.samples[s].n_vehicles, len(K))
-        self.u[s] = np.concatenate((self.u[s], created_u_s), axis=1)
+        created_u_s = created_u_s.reshape(s.n_vehicles, len(K))
+        self.u[s.index] = np.concatenate((self.u[s.index], created_u_s), axis=1)
 
-    def update_constraints(self, K: Iterable):
+    def update_constraints(self, K: range) -> None:
         if self.fixed_station_number is not None:
             self.update_fixed_station_number_constraint(K=K)
 
-        self.v_lt_w_constraints = self.add_w_lt_mv_constraints(K=K)
-        self.w_lt_mv_constraints = self.add_v_lt_w_constraints(K=K)
+        self.add_w_lt_mv_constraints(K=K)
+        self.add_v_lt_w_constraints(K=K)
 
         for s in self.S:
             self.add_max_queue_constraints(s=s, K=K)
-            self.add_allocation_constraints(s=s, K=K)
+            # self.add_allocation_constraints(s=s, K=K)
             self.update_service_constraint(s=s, K=K)
             self.update_allocation_constraints(s, K=K)
 
-
-    def update_fixed_station_number_constraint(self, K: Iterable):
-        # set constrained of fixed number of built chargers
+    def update_fixed_station_number_constraint(self, K: range) -> None:
+        # try to get the constraint by name
         constraint = self.m.get_constraint_by_name("fixed_station_number")
+        left_sum_K = self.m.sum(self.v[k] for k in K)
 
         if constraint is None:
+            # if not found then add it
             self.fixed_station_number_constraint = self.m.add_constraint(
-                self.m.sum(self.v) == self.fixed_station_number, ctname="fixed_station_number"
+                left_sum_K == self.fixed_station_number, ctname="fixed_station_number"
             )
         else:
-            self.fixed_station_number_constraint = constraint.left_expr.add(self.m.sum(self.v[k] for k in K))
+            self.fixed_station_number_constraint = constraint.left_expr.add(left_sum_K)
 
-    def add_w_lt_mv_constraints(self, K: Iterable):
+    def add_w_lt_mv_constraints(self, K: range) -> None:
         logger.debug("Adding 'w <= v * station_upperbound' constraints.")
         new_w_lt_mv_constraints = self.m.add_constraints(
             (self.w[k] <= self.v[k] * self.station_ub for k in K),
@@ -300,82 +297,67 @@ class Solver:
         )
         self.w_lt_mv_constraints += new_w_lt_mv_constraints
 
-    def add_v_lt_w_constraints(self, K: Iterable):
+    def add_v_lt_w_constraints(self, K: range) -> None:
         logger.debug("Adding 'b <= n' constraints.")  # TODO: update docstrings and logging
         new_v_lt_mv_constraints = self.m.add_constraints(
-            (self.v[k] <= self.w[k] for k in K), names=(f"number_v_{k}" for k in K)
+            (self.v[k] <= self.w[k] for k in K),
+            names=(f"number_v_{k}" for k in K),
         )
         self.v_lt_w_constraints += new_v_lt_mv_constraints
 
-    def add_max_queue_constraints(self, s: int, K: Iterable, q: int = MOPTA_CONSTANTS["queue_size"]):
+    def add_max_queue_constraints(self, s: Sample, K: range, q: int = MOPTA_CONSTANTS["queue_size"]) -> None:
+        # for every new station create new allocation constraints
         logger.debug("Adding max queue constraints (allocated vehicles <= max queue).")
         new_max_queue_constraints = self.m.add_constraints(
-            (
-                self.m.sum(self.u[s][i, k] for i in self.samples[s].I if self.samples[s].reachability_matrix[i, k])
-                <= q * self.w[k]
-                for k in K
-            ),
+            (self.m.sum(self.u[s.index][i, k] for i in s.I if s.reachable[i, k]) <= q * self.w[k] for k in K),
             names=(f"allocation_qw_{s}_{k}" for k in K),
         )
         self.max_queue_constraints += new_max_queue_constraints
 
-
-        # else:
-        #     self.v_lt_w_constraints += self.add_w_lt_mv_constraints(K=K)
-        #     self.w_lt_mv_constraints += self.add_v_lt_w_constraints(K=K)
-        #     for s in self.samples_range:
-        #         self.max_queue_constraints[s] += self.add_max_queue_constraints(s=s, K=K)
-        #         self.service_constraints[s] = self.m.get_constraint_by_name(f"service_level_{s}").left_expr.add(
-        #             self.m.sum(
-        #                 self.u[s][i, k]
-        #                 for i in self.samples[s].I
-        #                 for k in K
-        #                 if self.samples[s].reachability_matrix[i, k]
-        #             )
-        #         )
-        #         for i in self.samples[s].I:
-        #             self.allocation_constraints[s][i] = self.m.get_constraint_by_name(
-        #                 f"charger_allocation_{s}_{i}"
-        #             ).left_expr.add(self.m.sum(self.u[s][i, k] for k in K if self.samples[s].reachability_matrix[i, k]))
-
-    def add_allocation_constraints(self, s: int, K: Iterable):
-        logger.debug("Adding allocation constraints (every vehicle is allocated to at most one station).")
-        return self.m.add_constraints(
-            (
-                self.m.sum(self.u[s][i, k] for k in K if self.samples[s].reachability_matrix[i, k]) <= 1
-                for i in self.samples[s].I
-            ),
-            names=(f"charger_allocation_{s}_{i}" for i in self.samples[s].I),
-        )
-
-    def update_service_constraint(self, s: int, K: Iterable):
+    def update_service_constraint(self, s: Sample, K: range) -> None:
         logger.debug(f"Adding service constraint (min. {self.service_level * 100}% of vehicles are allocated).")
-        return self.m.add_constraint(
-            (
-                self.m.sum(
-                    self.u[s][i, k] for i in self.samples[s].I for k in K if self.samples[s].reachability_matrix[i, k]
-                )
-                >= self.service_level * self.samples[s].n_vehicles
-            ),
-            ctname=f"service_level_{s}",
-        )
 
-    def get_build_cost(self, K: Iterable):
+        constraint = self.m.get_constraint_by_name(f"service_level_{s}")
+        left_sum_K = self.m.sum(self.u[s.index][i, k] for i in s.I for k in K if s.reachable[i, k])
+
+        if constraint is None:
+            # does not exist yet
+            self.service_constraints.append(
+                self.m.add_constraint((left_sum_K >= self.service_level * s.n_vehicles), ctname=f"service_level_{s}"),
+            )
+        else:
+            self.service_constraints[s.index] = constraint.left_expr.add(left_sum_K)
+
+    def update_allocation_constraints(self, s: Sample, K: range) -> None:
+        logger.debug("Adding allocation constraints (every vehicle is allocated to at most one station).")
+        for i in s.I:
+            constraint = self.m.get_constraint_by_name(f"charger_allocation_{s}_{i}")
+            left_sum_K = self.m.sum(self.u[s.index][i, k] for k in K if s.reachable[i, k])
+
+            if constraint is None:
+                self.allocation_constraints[s.index].append(
+                    self.m.add_constraint((left_sum_K <= 1), ctname=(f"charger_allocation_{s}_{i}"))
+                )
+
+            else:
+                self.allocation_constraints[s.index][i] = constraint.left_expr.add(left_sum_K)
+
+    def get_build_cost(self, K: range):
         return self.build_cost_param * self.m.sum(self.v[k] for k in K)
 
-    def get_maintenance_cost(self, K: Iterable):
+    def get_maintenance_cost(self, K: range):
         return self.maintenance_cost_param * self.m.sum(self.w[k] for k in K)
 
-    def get_drive_charge_cost(self, s: int, K: Iterable):
+    def get_drive_charge_cost(self, s: int, K: range):
         return self.drive_charge_cost_param * self.m.sum(
-            self.u[s][i, k] * self.samples[s].distance_matrix[i, k]
-            for i in self.samples[s].I
+            self.u[s][i, k] * self.S[s].distance_matrix[i, k]
+            for i in self.S[s].I
             for k in K
-            if self.samples[s].reachability_matrix[i, k]
+            if self.S[s].reachable[i, k]
         )
 
     def get_fixed_charge_cost(self, s: int):
-        return self.charge_cost_param * (250 - self.samples[s].ranges).sum()
+        return self.charge_cost_param * (250 - self.S[s].ranges).sum()
 
     def extract_solution(self, sol: SolveSolution, dtype=float):
         logger.info("Extracting solution.")
@@ -383,10 +365,10 @@ class Solver:
         n_sol = np.array(sol.get_value_list(dvars=self.w)).round().astype(dtype)
 
         u_sol = []
-        for s in self.samples_range:
+        for s in self.S_range:
             u_sol.append(np.zeros(self.u[s].shape))
-            u_sol[s][self.samples[s].reachability_matrix[i, k]] = np.array(
-                sol.get_value_list(dvars=self.u[s][self.samples[s].reachability_matrix[i, k]].flatten())
+            u_sol[s][self.S[s].reachability_matrix[i, k]] = np.array(
+                sol.get_value_list(dvars=self.u[s][self.S[s].reachability_matrix[i, k]].flatten())
             )
             u_sol[s] = u_sol[s].round().astype(dtype)
         # round needed for numerical stability (e.g. solution with 0.9999999999999999)
@@ -441,12 +423,12 @@ class Solver:
             # find allocated vehicles and their ranges
             X_allocated = []
             ranges_allocated = []
-            for s in self.samples_range:
+            for s in self.S_range:
                 indices_vehicles_s = np.argwhere(
                     u_sol[s][:, j] == 1
                 ).flatten()  # indices of allocated vehicles to specific charger
                 X_allocated.append(self.vehicle_locations_matrices[s][indices_vehicles_s])
-                ranges_allocated.append(self.samples[s].ranges[indices_vehicles_s])
+                ranges_allocated.append(self.S[s].ranges[indices_vehicles_s])
 
             # combine them
             X_allocated = np.vstack(X_allocated)  # combine all vehicle locations from the different samples
@@ -475,7 +457,7 @@ class Solver:
 
         return improved_locations, location_indices, empty_indices
 
-    def set_objective(self, K: Iterable):
+    def set_objective(self, K: range):
         # sanity check: all of them are None or all of them are not None
         if (self.build_cost is None) != (self.maintenance_cost is None) != (self.drive_charge_cost is None):
             raise ValueError("All of build_cost, maintenance_cost and drive_charge_cost must be None or not None.")
@@ -483,14 +465,12 @@ class Solver:
         if self.build_cost is None:  # then all of them are None
             self.build_cost = self.get_build_cost(K=K)
             self.maintenance_cost = self.get_maintenance_cost(K=K)
-            self.drive_charge_cost = sum(self.get_drive_charge_cost(s=s, K=K) for s in self.samples_range)
-            self.fixed_charge_cost = sum(
-                self.get_fixed_charge_cost(s=s) for s in self.samples_range
-            )  # independent of K
+            self.drive_charge_cost = sum(self.get_drive_charge_cost(s=s, K=K) for s in self.S_range)
+            self.fixed_charge_cost = sum(self.get_fixed_charge_cost(s=s) for s in self.S_range)  # independent of K
         else:
             self.build_cost += self.get_build_cost(K=K)
             self.maintenance_cost += self.get_maintenance_cost(K=K)
-            self.drive_charge_cost += sum(self.get_drive_charge_cost(s=s, K=K) for s in self.samples_range)
+            self.drive_charge_cost += sum(self.get_drive_charge_cost(s=s, K=K) for s in self.S_range)
 
         # set objective
         self.m.minimize(
@@ -508,8 +488,8 @@ class Solver:
         else:
             return False
 
-    def update_distances_reachable(self, v: int, improved_locations: np.ndarray, K: Iterable):
-        for s in self.samples_range:
+    def update_distances_reachable(self, v: int, improved_locations: np.ndarray, K: range):
+        for s in self.S_range:
             self.distance_matrices[s] = np.concatenate(
                 (
                     self.distance_matrices[s],
@@ -518,14 +498,10 @@ class Solver:
                 axis=1,
             )  # add new distances
             new_reachable = np.array(
-                [
-                    self.samples[s].distance_matrix[i, k] <= self.samples[s].ranges[i]
-                    for i in self.samples[s].I
-                    for k in K
-                ]
+                [self.S[s].distance_matrix[i, k] <= self.S[s].ranges[i] for i in self.S[s].I for k in K]
             ).reshape(self.n_vehicles_samples[s], v)
-            self.samples[s].reachability_matrix[i, k] = np.concatenate(
-                (self.samples[s].reachability_matrix[i, k], new_reachable), axis=1
+            self.S[s].reachability_matrix[i, k] = np.concatenate(
+                (self.S[s].reachability_matrix[i, k], new_reachable), axis=1
             )
 
     def construct_mip_start(
@@ -536,12 +512,12 @@ class Solver:
         location_indices: np.ndarray,
         empty_indices: np.ndarray,
         v: int,
-        K: Iterable,
+        K: range,
     ):
         b_start = np.concatenate((b_sol, np.zeros(v, dtype=float)))
         n_start = np.concatenate((n_sol, np.zeros(v, dtype=float)))
         u_start = []
-        for s in self.samples_range:
+        for s in self.S_range:
             u_start.append(
                 np.concatenate((u_sol[s], np.zeros((self.n_vehicles_samples[s], v), dtype=float)), axis=1, dtype=float)
             )
@@ -553,13 +529,13 @@ class Solver:
         b_start[location_indices] = 0
         n_start[location_indices] = 0
         # update u
-        for s in self.samples_range:
+        for s in self.S_range:
             for k, j in enumerate(location_indices):
                 indices_vehicles = np.argwhere(u_sol[s][:, j] == 1).flatten()
                 for i in indices_vehicles:
                     u_start[s][i, j] = 0
                     u_start[s][i, K[k]] = 1
-                    if not self.samples[s].reachability_matrix[i, k][i, K[k]]:
+                    if not self.S[s].reachability_matrix[i, k][i, K[k]]:
                         logger.warning(f"vehicle {i} cannot reach location {K[k]}")
 
         # check whether there are built locations that are empty
@@ -581,10 +557,10 @@ class Solver:
 
                 mip_start.add_var_value(self.v[j], b_start[j])
                 mip_start.add_var_value(self.w[j], n_start[j])
-        for s in self.samples_range:
+        for s in self.S_range:
             for u_dv, u_val in zip(
-                self.u[s][self.samples[s].reachability_matrix[i, k]],
-                u_start[s][self.samples[s].reachability_matrix[i, k]],
+                self.u[s][self.S[s].reachability_matrix[i, k]],
+                u_start[s][self.S[s].reachability_matrix[i, k]],
             ):
                 if u_val == 1:
                     mip_start.add_var_value(u_dv, u_val)
@@ -661,10 +637,8 @@ class Solver:
 
         # compute all maximum service levels to check for infeasibility
         max_service_levels = [
-            compute_maximum_matching(
-                n=np.repeat(8, self.n_potential_cl), reachable=self.samples[s].reachability_matrix[i, k]
-            )
-            for s in self.samples_range
+            compute_maximum_matching(n=np.repeat(8, self.n_potential_cl), reachable=self.S[s].reachability_matrix[i, k])
+            for s in self.S_range
         ]
         if min(max_service_levels) < self.service_level:
             raise ValueError(

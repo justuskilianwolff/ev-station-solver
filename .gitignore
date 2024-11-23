@@ -170,8 +170,5 @@ requirements*.lock
 
 .DS_Store
 
-.vscode/
-
-
 # dont track test files on the root directory
 /test*.*

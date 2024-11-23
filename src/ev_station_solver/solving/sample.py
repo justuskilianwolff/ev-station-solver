@@ -13,21 +13,23 @@ from ev_station_solver.stochastic_functions import (
 class Sample:
     def __init__(
         self,
+        index: int,
         vehicle_locations: np.ndarray,
         ranges: np.ndarray,
         distance_matrix: np.ndarray,
     ):
+        self.index = index
         self.vehicle_locations: np.ndarray = vehicle_locations
         self.n_vehicles: int = vehicle_locations.shape[0]  # list of number of vehicles in sample
         self.I: range = range(self.n_vehicles)  # indices of vehicles in sample
         self.ranges: np.ndarray = ranges  # numpy 1D array of ranges of vehicles in sample
         self.distance_matrix: np.ndarray = distance_matrix  # distance matrix of vehicles in sample to cl
-        self.reachability_matrix: np.ndarray = (
+        self.reachable: np.ndarray = (
             self.distance_matrix.T <= self.ranges
         ).T  # reachabilitye matrix of vehicles in sample
 
     @classmethod
-    def create_sample(cls, total_vehicle_locations: np.ndarray, coordinates_potential_cl: np.ndarray):
+    def create_sample(cls, index: int, total_vehicle_locations: np.ndarray, coordinates_potential_cl: np.ndarray):
         ranges = generate_ranges(num=total_vehicle_locations.shape[0])  # ranges for each car
         charging_prob = ev_charging_probabilities(ranges=ranges)  # probability of charging for each car
         charging = ev_charging(
@@ -41,4 +43,7 @@ class Sample:
         # distance matrix of vehicles to cl
         distance_matrix = get_distance_matrix(vehicle_locations, coordinates_potential_cl)
 
-        return cls(vehicle_locations, ranges, distance_matrix)
+        return cls(index, vehicle_locations, ranges, distance_matrix)
+
+    def __str__(self) -> str:
+        return str(self.index)
