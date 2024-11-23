@@ -2,7 +2,7 @@ import logging
 
 from ev_station_solver.constants import MOPTA_CONSTANTS
 from ev_station_solver.loading import load_locations
-from ev_station_solver.mopta_solver import MOPTASolver
+from ev_station_solver.solving.mopta_solver import MOPTASolver
 
 # use given starting solutions
 locations = load_locations("small").sample(100).values
