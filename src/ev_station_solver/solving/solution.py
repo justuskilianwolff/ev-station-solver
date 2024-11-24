@@ -34,6 +34,9 @@ class Solution:
         # costs as dict
         self.costs = {kpi.name: round(m.kpi_value_by_name(name=kpi.name, solution=sol), 2) for kpi in m.iter_kpis()}
 
+        # report both solutions
+        # TODO:    self.report_kpis(solution=sol)
+
     def set_location_indice_sets(self):
         cl_built_indices = np.argwhere(self.v_sol == 1).flatten()
         cl_not_built_indices = np.argwhere(self.v_sol == 0).flatten()

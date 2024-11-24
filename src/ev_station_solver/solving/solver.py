@@ -5,6 +5,7 @@ from typing import Callable, Literal, Optional
 import numpy as np
 from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
+from docplex.mp.solution import SolveSolution
 from sklearn.cluster import KMeans
 from tqdm import tqdm
 
@@ -206,7 +207,7 @@ class Solver:
         min_distance: float = MOPTA_CONSTANTS["min_distance"],
         timelimit: Optional[float] = 10,
         verbose: bool = False,
-    ):
+    ) -> Solution:
         """
         Solves the optimization problem for EV charger placement.
 
@@ -346,70 +347,12 @@ class Solver:
             if self.streamlit_callback is not None:
                 self.streamlit_callback(self)
 
-            # compute for every built location its best location. Return that location and its indice
-            new_potential_cl, relating_old_potential_cl_indices, cl_built_no_all_indices = self.find_improved_locations(
-                built_indices=solution.cl_built_indices,
-                u_sol=solution.u_sol,
+            mip_start = self.apply_improvement_heuristic(
+                solution=solution, min_distance=min_distance, counting_radius=counting_radius, filter_locations=True
             )
 
-            # filter locations that are built within a distance of a not built location
-            filtered_new_potential_cl, filtered_relating_old_potential_cl_indices = self.filter_locations(
-                improved_locations=new_potential_cl,
-                old_location_indices=relating_old_potential_cl_indices,
-                min_distance=min_distance,
-                counting_radius=counting_radius,
-            )
-
-            # if no new locations found end the optimisation routine
-            n_new_potential_cl = len(filtered_new_potential_cl)
-            if n_new_potential_cl == 0:
-                logger.info("No new locations found -> stopping the optimization routine.")
-                break
-            else:  # add improved locations to solution
-                self.added_locations.append(filtered_new_potential_cl)
-
-            # update problem with new potential charging locations
-            # set range for new potential charging locations
-            K = range(self.n_potential_cl, self.n_potential_cl + n_new_potential_cl)
-
-            # update locations
-            self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, filtered_new_potential_cl))
-            # update distances and reachable
-            self.update_distances_reachable(v=n_new_potential_cl, improved_locations=filtered_new_potential_cl, K=K)
-
-            # update the model with new locations
-            self.add_new_decision_variables(K=K)
-            self.update_constraints(K=K)
-            self.update_objective(K=K)
-            self.update_kpis()
-
-            # Update number of locations and location range
-            self.n_potential_cl += n_new_potential_cl
-            self.J = range(self.n_potential_cl)
-            logger.info(
-                f"{len(filtered_new_potential_cl)} improved new locations found. There are now {self.n_potential_cl} locations."
-            )
-
-            # mip start with new locations (allocate to improved)
-            # generate new mip start
-            mip_start, b_start, n_start, u_start = self.construct_mip_start(
-                u_sol=solution.u_sol,
-                v_sol=solution.v_sol,
-                w_sol=solution.w_sol,
-                filtered_relating_old_potential_cl_indices=filtered_relating_old_potential_cl_indices,
-                cl_built_no_all_indices=cl_built_no_all_indices,
-                n_new_potential_cl=n_new_potential_cl,
-                K=K,
-            )
             # Add mipstart to model
             self.m.add_mip_start(mip_start, complete_vars=True, effort_level=4, write_level=3)
-
-            # report both solutions
-            self.report_kpis(solution=sol)
-            # DISCUSS: should we report the warm start? this is included in the next one anywy? we would then omve it to the solution class
-            # self.report_kpis(
-            #     solution=mip_start
-            # )
 
             # check if solution is stable -> There was no improvement compare to the last iteration
             # If it is stop the algorithm
@@ -417,27 +360,89 @@ class Solver:
                 logger.info("Solution is stable -> stopping the optimization routine.")
                 break
 
+        # Optimization finished
+        end_time = time.time()
         # clear model to free resources
         self.m.end()
 
-        # cast b_start and n_start to int since they are not longer needed to be floats for warmstarts
-        b_start = b_start.astype("int")
-        n_start = n_start.astype("int")
-
-        end_time = time.time()
-
-        # Always return the solution with the optimised locations (we don't vehiclee how close)
-        # compute the best locations without filtering
-        logger.info("Computing improved locations without filtering for minimum distance for current allocations.")
-        locations_built, _, _ = self.find_improved_locations(
-            built_indices=np.argwhere(b_start == 1).flatten(), u_sol=u_start
-        )
-        v_sol_built = n_start[b_start == 1]
+        # Always return the solution with the best locations
+        # That means the returned solution has no filtering applied
+        final_mip_start = self.apply_improvement_heuristic(solution=solution, filter_locations=False)
 
         logger.info(f"Optimization finished in {round(end_time - start_time, 2)} seconds.")
         logger.info(f"There are {b_start.sum()} built locations with in total {n_start.sum()} chargers.")
 
-        return v_sol_built, locations_built, n_outer_iterations
+        return final_solution
+
+    def apply_improvement_heuristic(
+        self,
+        solution,
+        min_distance: Optional[float] = None,
+        counting_radius: Optional[float] = None,
+        filter_locations: bool = False,
+    ) -> Optional[SolveSolution]:
+        # compute for every built location its best location. Return that location and its indice
+        new_potential_cl, relating_old_potential_cl_indices, cl_built_no_all_indices = self.find_improved_locations(
+            built_indices=solution.cl_built_indices,
+            u_sol=solution.u_sol,
+        )
+
+        if filter_locations:
+            # make sure counting and min dsitance are set
+            if min_distance is None:
+                raise ValueError("Set min distance if applying the filtering")
+            if counting_radius is None:
+                raise ValueError("Set counting_radius if applying the filtering")
+
+            # filter locations that are built within a distance of a not built location
+            new_potential_cl, relating_old_potential_cl_indices = self.filter_locations(
+                improved_locations=new_potential_cl,
+                old_location_indices=relating_old_potential_cl_indices,
+                min_distance=min_distance,
+                counting_radius=counting_radius,
+            )
+
+        # if no new locations found end the optimisation routine
+        n_new_potential_cl = len(new_potential_cl)
+        if n_new_potential_cl == 0:
+            logger.info("No new locations found -> stopping the optimization routine.")
+            return None
+        else:  # add improved locations to solution
+            self.added_locations.append(new_potential_cl)
+
+        # update problem with new potential charging locations
+        # set range for new potential charging locations
+        K = range(self.n_potential_cl, self.n_potential_cl + n_new_potential_cl)
+
+        # update locations
+        self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, new_potential_cl))
+        # update distances and reachable
+        self.update_distances_reachable(v=n_new_potential_cl, improved_locations=new_potential_cl, K=K)
+
+        # update the model with new locations
+        self.add_new_decision_variables(K=K)
+        self.update_constraints(K=K)
+        self.update_objective(K=K)
+        self.update_kpis()
+
+        # Update number of locations and location range
+        self.n_potential_cl += n_new_potential_cl
+        self.J = range(self.n_potential_cl)
+        logger.info(
+            f"{len(new_potential_cl)} improved new locations found. There are now {self.n_potential_cl} locations."
+        )
+
+        # mip start with new locations (allocate to improved)
+        # generate new mip start
+        return self.get_mip_start(
+            u_sol=solution.u_sol,
+            v_sol=solution.v_sol,
+            w_sol=solution.w_sol,
+            old_potential_cl_indices=relating_old_potential_cl_indices,
+            cl_built_no_all_indices=cl_built_no_all_indices,
+            n_new_potential_cl=n_new_potential_cl,
+            K=K,
+        )
 
     def add_new_decision_variables(self, K: range):
         # setting new deicison variables for new potential cl
@@ -714,17 +719,43 @@ class Solver:
             )
             s.reachable = np.concatenate((s.reachable, new_reachable), axis=1)
 
-    def construct_mip_start(
+    def get_mip_start(
         self,
         u_sol: list,
         v_sol: np.ndarray,
         w_sol: np.ndarray,
-        filtered_relating_old_potential_cl_indices: np.ndarray,
+        old_potential_cl_indices: np.ndarray,
         cl_built_no_all_indices: np.ndarray,
         n_new_potential_cl: int,
         K: range,
     ):
-        # create start arrays with zeros
+        # create start arrays with zeros for new locations
+        v_start, w_start, u_start = self.create_mip_arrays(v_sol, w_sol, u_sol, n_new_potential_cl)
+
+        # set new locations to built and copy their old n value
+        v_start, w_start, u_start = self.set_mip_array_new_locations(
+            v_start=v_start,
+            w_start=w_start,
+            u_start=u_start,
+            w_sol=w_sol,
+            u_sol=u_sol,
+            old_potential_cl_indices=old_potential_cl_indices,
+            K=K,
+        )
+
+        # check whether there are built locations that are empty
+        v_start, w_start = self.set_built_but_empty_zero(
+            v_start=v_start,
+            w_start=w_start,
+            cl_built_no_all_indices=cl_built_no_all_indices,
+        )
+
+        # create mip solution from start arrays
+        mip_start = self.create_mip_solution(v_start, w_start, u_start)
+
+        return mip_start
+
+    def create_mip_arrays(self, v_sol, w_sol, u_sol, n_new_potential_cl):
         v_start = np.concatenate((v_sol, np.zeros(n_new_potential_cl, dtype=float)))
         w_start = np.concatenate((w_sol, np.zeros(n_new_potential_cl, dtype=float)))
         u_start = []
@@ -734,24 +765,26 @@ class Solver:
                     (u_sol[s.index], np.zeros((s.n_vehicles, n_new_potential_cl), dtype=float)), axis=1, dtype=float
                 )
             )
+        return v_start, w_start, u_start
 
-        # set new locations to built and copy their old n value
+    def set_mip_array_new_locations(self, v_start, w_start, u_start, w_sol, u_sol, old_potential_cl_indices, K):
         v_start[K] = 1
-        w_start[K] = w_sol[filtered_relating_old_potential_cl_indices]
+        w_start[K] = w_sol[old_potential_cl_indices]
         # set old locations to not built
-        v_start[filtered_relating_old_potential_cl_indices] = 0
-        w_start[filtered_relating_old_potential_cl_indices] = 0
+        v_start[old_potential_cl_indices] = 0
+        w_start[old_potential_cl_indices] = 0
         # update u
         for s in self.S:
-            for k, j in enumerate(filtered_relating_old_potential_cl_indices):
+            for k, j in enumerate(old_potential_cl_indices):
                 indices_vehicles = np.argwhere(u_sol[s.index][:, j] == 1).flatten()
                 for i in indices_vehicles:
                     u_start[s.index][i, j] = 0
                     u_start[s.index][i, K[k]] = 1
                     if not s.reachable[i, K[k]]:
                         logger.warning(f"Vehicle {i} cannot reach location {K[k]}")
+        return v_start, w_start, u_start
 
-        # check whether there are built locations that are empty
+    def set_built_but_empty_zero(self, v_start, w_start, cl_built_no_all_indices):
         if len(cl_built_no_all_indices) > 0:
             logger.info(
                 f"Found {len(cl_built_no_all_indices)} built locations with no vehicles allocated -> set them to 0."
@@ -760,6 +793,9 @@ class Solver:
                 v_start[i] = 0
                 w_start[i] = 0
 
+        return v_start, w_start
+
+    def create_mip_solution(self, v_start, w_start, u_start):
         # construct the MIP start with the arrays computed above
         mip_start = self.m.new_solution()
         # name solution
@@ -778,4 +814,4 @@ class Solver:
                 if u_val == 1:
                     mip_start.add_var_value(u_dv, u_val)
 
-        return mip_start, v_start, w_start, u_start
+        return mip_start
