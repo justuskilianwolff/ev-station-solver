@@ -1,4 +1,5 @@
 import numpy as np
+from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from docplex.mp.solution import SolveSolution
 
@@ -10,7 +11,7 @@ logger = get_logger(__name__)
 
 
 class Solution:
-    def __init__(self, v, w, u, sol: SolveSolution, sol_det: SolveDetails, S: list[Sample]) -> None:
+    def __init__(self, v, w, u, sol: SolveSolution, sol_det: SolveDetails, S: list[Sample], m: Model) -> None:
         dtype = float  # desired dtype for numpy
         # extract solution
         self.v_sol = np.array(sol.get_value_list(dvars=v)).round().astype(dtype)
@@ -29,9 +30,9 @@ class Solution:
 
         # set indice sets for solution
         self.cl_built_indices, self.cl_not_built_indices = self.set_location_indice_sets()
-        self.added_locations = None
 
-        # set cost terms
+        # costs as dict
+        self.costs = {kpi.name: round(m.kpi_value_by_name(name=kpi.name, solution=sol), 2) for kpi in m.iter_kpis()}
 
     def set_location_indice_sets(self):
         cl_built_indices = np.argwhere(self.v_sol == 1).flatten()
