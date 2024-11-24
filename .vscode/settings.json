@@ -30,7 +30,7 @@
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true,
   "python.analysis.diagnosticSeverityOverrides": {
-    "reportOperatorIssue": "none",  //*" not supported for types "float" and "Unknown | LinearExpr | ZeroExpr | None"
+    "reportOperatorIssue": "none",  //"*" not supported for types "float" and "Unknown | LinearExpr | ZeroExpr | None"
     "reportOptionalOperand": "none" //Operator ">=" not supported for "None" (model.sum() could return None)
   },
 

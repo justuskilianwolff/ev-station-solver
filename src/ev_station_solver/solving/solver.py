@@ -4,7 +4,6 @@ from typing import Callable, Literal, Optional
 
 import numpy as np
 from docplex.mp.model import Model
-from k_means_constrained import KMeansConstrained
 from sklearn.cluster import KMeans
 from tqdm import tqdm
 
@@ -13,7 +12,6 @@ from ev_station_solver.errors import IntegerInfeasible
 from ev_station_solver.helper_functions import (
     compute_maximum_matching,
     get_distance_matrix,
-    get_indice_sets_stations,
 )
 from ev_station_solver.location_improvement import find_optimal_location
 from ev_station_solver.logging import get_logger
@@ -135,7 +133,7 @@ class Solver:
     def add_initial_locations(
         self,
         n_stations: int,
-        mode: Literal["random", "k-means", "k-means-constrained"] = "random",
+        mode: Literal["random", "k-means"] = "random",
         verbose: int = 0,
         seed: Optional[int] = None,
     ) -> None:
@@ -161,30 +159,14 @@ class Solver:
             kmeans = KMeans(n_clusters=n_stations, n_init=1, random_state=seed, verbose=verbose)
             new_locations = kmeans.fit(self.vehicle_locations).cluster_centers_
 
-        elif mode == "k-means-constrained":
-            logger.debug(f"Adding {n_stations} k-means-constrained locations.")
-            kmeans_constrained = KMeansConstrained(
-                n_clusters=n_stations,
-                size_max=self.station_ub
-                * 2
-                / MOPTA_CONSTANTS["mu_charging"],  # use expected number of charging vehicles
-                n_init=1,
-                random_state=seed,
-                verbose=verbose,
-            )
-            new_locations = kmeans_constrained.fit(self.vehicle_locations).cluster_centers_
-
         else:
-            raise Exception(
-                'Invalid mode for initial locations. Choose between "random", "k-means" or "k-means-constrained".'
-            )
+            raise Exception('Invalid mode for initial locations. Choose between "random" or "k-means"')
 
         # add new locations
         self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, new_locations))
 
         self.n_potential_cl = len(self.coordinates_potential_cl)
         self.J = range(self.n_potential_cl)
-        self.added_locations.append(self.coordinates_potential_cl)
 
     def add_samples(self, num: int):
         def add_sample():
@@ -273,12 +255,13 @@ class Solver:
         # monitor time
         start_time = time.time()
         K = self.J  # fist K is J
+        current_objective_value = float("nan")
 
         while True:
             # update iterations number
             n_outer_iterations += 1
 
-            # update the model
+            # update the model with new locations
             self.add_new_decision_variables(K=K)
             self.update_constraints(K=K)
             self.update_objective(K=K)
@@ -293,44 +276,35 @@ class Solver:
 
             # count inner iterations for logging and potential future improvement tracking
             n_inner_iterations = 0
-            b_start_defined = False
 
             # start improving the current potential cl with our heuristic
             while True:  # run the inner loop while improvement between solutions is good enough
-                # optimise the model without a time limit to get a feasible starting solution for first iteration
-                if (n_outer_iterations > 1) and (timelimit is not None):
+                if (n_outer_iterations == 2) and (timelimit is not None):
+                    # set time limit in second iteration if present (first solve might need a bit longer)
                     self.m.parameters.timelimit.set(timelimit)
 
-                # get current objective value
-                current_objective_value = self.m.objective_value
+                # get solution and status
                 sol = self.m.solve(log_output=verbose, clean_before_solve=False)
-
-                # get status
-                status = self.m.solve_details.status
+                status = self.m.solve_details.status  # get status
+                n_inner_iterations += 1
 
                 if status == "integer infeasible":
                     raise IntegerInfeasible
 
-                n_inner_iterations += 1  # TODO: move somewehre
-
-                if status == "solution limit exceeded":
-                    new_objective_value = (
-                        self.m.objective_value
-                    )  # objective value of found solution #TODO: whats the difference between the two objw values?
-
+                elif status == "solution limit exceeded":
                     # new solution was found (not necesarily better) -> keep going
-                    improvement = round(
-                        current_objective_value - new_objective_value, 2
-                    )  # improvement in objective value
+                    improvement = round(current_objective_value - self.m.objective_value, 2)
+                    # set current objective value
+                    current_objective_value = self.m.objective_value
 
                     logger.debug(f"Solution found, which is ${improvement} better. Continue with the next iteration.")
 
                     # logging all 4 iterations
                     if n_inner_iterations % 4 == 0:
-                        logger.info(
-                            f"Solver is improving the solution. Current objective value: ${round(new_objective_value, 2)}"
-                        )
-                    # keep going since the solution limit was exceeded
+                        rounded_objective_value = round(current_objective_value, 2)
+                        logger.info(f"Solver is improving the solution, objective value: ${rounded_objective_value}")
+
+                    # next solve iteration
                     continue
 
                 elif status == "time limit exceeded":
@@ -346,20 +320,17 @@ class Solver:
                     raise Exception(f"Solve ended with status: {status}")
 
             # extract current solution
-            sol.name = "CPLEX solution"  # name solution for KPI reporting #TODO: maybe use 'solution n_iter'
-            solution = Solution(v=self.v, w=self.w, sol=sol)  # Extend
-            self.solutions.append(solution)  # append solution vectors to list of solutions
+            # TODO: Extend solution class
+            solution = Solution(v=self.v, w=self.w, u=self.u, sol=sol, sol_det=self.m.solve_details, S=self.S)
 
             # if a streamlit callback function was added -> call it
             if self.streamlit_callback is not None:
                 self.streamlit_callback(self)
 
-            # determine which stations are built to improve their location
-            built_indices, not_built_indices = get_indice_sets_stations(b_sol)
-            logger.debug(f"There are {len(built_indices)} built and {len(not_built_indices)} not built locations.")
             # compute for every built location its best location. Return that location and its indice
             improved_locations, location_indices, empty_indices = self.find_improved_locations(
-                built_indices=built_indices, u_sol=u_sol
+                built_indices=solution.cl_built_indices,
+                u_sol=solution.u_sol,
             )
 
             # filter locations that are built within a distance of a not built location
@@ -369,48 +340,45 @@ class Solver:
                 min_distance=min_distance,
                 counting_radius=counting_radius,
             )
+            # add improved locations to solution
+            solution.added_locations = filtered_improved_locations
 
-            # if no new locations found
-            v = len(filtered_improved_locations)
-            if v == 0:
+            # if no new locations found end the optimisation routine
+            n_new_potential_cl = len(filtered_improved_locations)
+            if n_new_potential_cl == 0:
                 logger.info("No new locations found -> stopping the optimization routine.")
                 break
 
-            # add improved locations
-            self.added_locations.append(filtered_improved_locations)
-
-            # update problem
-            K = range(self.n_potential_cl, self.n_potential_cl + v)  # range for new locations
-            self.coordinates_potential_cl = np.concatenate(
-                (self.coordinates_potential_cl, filtered_improved_locations)
-            )  # update locations
-
+            # update problem with new potential charging locations
+            # set range for new potential charging locations
+            K = range(self.n_potential_cl, self.n_potential_cl + n_new_potential_cl)
+            # update locations
+            self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, filtered_improved_locations))
             # update distances and reachable
-            self.update_distances_reachable(v=v, improved_locations=filtered_improved_locations, K=K)
-
+            self.update_distances_reachable(v=n_new_potential_cl, improved_locations=filtered_improved_locations, K=K)
             # Update number of locations and location range
-            self.n_potential_cl += v
+            self.n_potential_cl += n_new_potential_cl
             self.J = range(self.n_potential_cl)
             logger.info(
                 f"{len(filtered_improved_locations)} improved new locations found. There are now {self.n_potential_cl} locations."
             )
 
+            # mip start with new locations (allocate to improved)
             # generate new mip start
-            # generate start vector for new solution
             mip_start, b_start, n_start, u_start = self.construct_mip_start(
-                u_sol=u_sol,
-                b_sol=b_sol,
-                n_sol=n_sol,
+                u_sol=solution.u_sol,
+                b_sol=solution.v_sol,
+                n_sol=solution.w_sol,
                 location_indices=filtered_old_indices,
                 empty_indices=empty_indices,
-                v=v,
+                v=n_new_potential_cl,
                 K=K,
             )
-
-            b_start_defined = True
-            # Add mipstart
+            # Add mipstart to model
             self.m.add_mip_start(mip_start, complete_vars=True, effort_level=4, write_level=3)
+
             # report both solutions
+            # sol.name = "CPLEX solution"  # name solution for KPI reporting #TODO: maybe use 'solution n_iter'
             self.report_kpis(solution=sol)
             self.report_kpis(solution=mip_start)
 
@@ -419,7 +387,10 @@ class Solver:
             if self.check_stable(epsilon=epsilon_stable, warmstart=mip_start):
                 logger.info("Solution is stable -> stopping the optimization routine.")
                 break
-        self.build_cost_sol = self.maintenance_cost_param * np.sum(n_sol) + self.build_cost_param * np.sum(b_sol)
+
+        self.build_cost_sol = self.maintenance_cost_param * np.sum(solution.w_sol) + self.build_cost_param * np.sum(
+            solution.v_sol
+        )
         self.drive_cost_sol = (
             self.objective_values[-1] - 365 / len(self.S) * self.fixed_charge_cost - self.build_cost_sol
         )
@@ -443,11 +414,7 @@ class Solver:
         logger.info(f"Optimization finished in {round(end_time - start_time, 2)} seconds.")
         logger.info(f"There are {b_start.sum()} built locations with in total {n_start.sum()} chargers.")
 
-        # obtain mip gaps
-        mip_gap = self.m.solve_details.gap
-        mip_gap_relative = self.m.solve_details.mip_relative_gap
-
-        return v_sol_built, locations_built, mip_gap, mip_gap_relative, n_outer_iterations
+        return v_sol_built, locations_built, n_outer_iterations
 
     def add_new_decision_variables(self, K: range):
         # logger.debug(f"We add {2 * len(K)} variables for b and n.")
@@ -459,7 +426,7 @@ class Solver:
         for s in self.S:
             self.add_new_dv_u_s(s=s, K=K)
 
-    def add_new_dv_v(self, K: range) -> None:  # TODO: check why K is used and not J ( also below)
+    def add_new_dv_v(self, K: range) -> None:
         """
         Create binary variables v_k for each location k in K
         :param K: range of (some) locations

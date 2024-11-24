@@ -16,10 +16,10 @@ mopta_solver = Solver(
 )
 
 # compute number of initial locations
-mopta_solver.add_initial_locations(n_clusters + 50, mode="k-means", seed=0)
+mopta_solver.add_initial_locations(n_clusters, mode="k-means", seed=0)
+mopta_solver.add_initial_locations(n_clusters, mode="random")
 mopta_solver.add_samples(num=2)
-mopta_solver.initialize_model()
-print(mopta_solver.m.solve())
+mopta_solver.solve()
 
 print("Test")
 # v_sol_built, locations_built, mip_gap, mip_gap_relative, iterations = mopta_solver.solve(
