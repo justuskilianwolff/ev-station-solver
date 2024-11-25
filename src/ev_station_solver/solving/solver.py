@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Callable, Literal, Optional
+from typing import Callable, Literal, Optional, Tuple
 
 import numpy as np
 from docplex.mp.model import Model
@@ -347,9 +347,11 @@ class Solver:
             if self.streamlit_callback is not None:
                 self.streamlit_callback(self)
 
-            mip_start = self.apply_improvement_heuristic(
+            break_flag, mip_start = self.apply_improvement_heuristic(
                 solution=solution, min_distance=min_distance, counting_radius=counting_radius, filter_locations=True
             )
+            if break_flag:
+                break
 
             # Add mipstart to model
             self.m.add_mip_start(mip_start, complete_vars=True, effort_level=4, write_level=3)
@@ -367,12 +369,17 @@ class Solver:
 
         # Always return the solution with the best locations
         # That means the returned solution has no filtering applied
-        final_mip_start = self.apply_improvement_heuristic(solution=solution, filter_locations=False)
+        final_solution_start = self.apply_improvement_heuristic(solution=solution, filter_locations=False)
+        if final_solution_start is None:
+            raise
+        final_solution = Solution(
+            v=self.v, w=self.w, u=self.u, sol=final_solution_start, sol_det=solve_details, S=self.S, m=self.m
+        )
 
         logger.info(f"Optimization finished in {round(end_time - start_time, 2)} seconds.")
         logger.info(f"There are {b_start.sum()} built locations with in total {n_start.sum()} chargers.")
 
-        return final_solution
+        return final_solution_start
 
     def apply_improvement_heuristic(
         self,
@@ -380,7 +387,7 @@ class Solver:
         min_distance: Optional[float] = None,
         counting_radius: Optional[float] = None,
         filter_locations: bool = False,
-    ) -> Optional[SolveSolution]:
+    ) -> Tuple[bool, SolveSolution]:
         # compute for every built location its best location. Return that location and its indice
         new_potential_cl, relating_old_potential_cl_indices, cl_built_no_all_indices = self.find_improved_locations(
             built_indices=solution.cl_built_indices,
@@ -406,7 +413,7 @@ class Solver:
         n_new_potential_cl = len(new_potential_cl)
         if n_new_potential_cl == 0:
             logger.info("No new locations found -> stopping the optimization routine.")
-            return None
+            return True, solution  # TDO check
         else:  # add improved locations to solution
             self.added_locations.append(new_potential_cl)
 
@@ -434,7 +441,7 @@ class Solver:
 
         # mip start with new locations (allocate to improved)
         # generate new mip start
-        return self.get_mip_start(
+        return False, self.get_mip_start(
             u_sol=solution.u_sol,
             v_sol=solution.v_sol,
             w_sol=solution.w_sol,
