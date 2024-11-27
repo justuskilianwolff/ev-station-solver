@@ -184,7 +184,7 @@ class Solver:
             sample = Sample(
                 index=len(self.S),
                 total_vehicle_locations=self.vehicle_locations,
-                coordinates_potential_cl=self.coordinates_potential_cl,
+                coordinates_cl=self.coordinates_potential_cl,
             )
 
             # append to samples
@@ -240,7 +240,7 @@ class Solver:
         # compute all maximum service levels to check for infeasibility
         # if one is below the minimum sla then raise
         max_service_levels = [
-            compute_maximum_matching(n=np.repeat(self.station_ub, self.n_potential_cl), reachable=s.reachable)
+            compute_maximum_matching(w=np.repeat(self.station_ub, self.n_potential_cl), reachable=s.reachable)
             for s in self.S
         ]
         if min(max_service_levels) < self.service_level:
@@ -307,7 +307,7 @@ class Solver:
                     else:
                         raise Exception(f"Failed with {status}.")
                 else:
-                    sol.name = "Allocation"  # name solution for KPI reporting
+                    sol.name = "Improvement"  # name solution for KPI reporting
                     if timelimit is not None:
                         # set time limit in second iteration if present (first solve might need a bit longer)
                         self.m.parameters.timelimit.set(timelimit)  # type: ignore
