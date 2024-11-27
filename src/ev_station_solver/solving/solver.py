@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Callable, Literal, Optional, Tuple
+from typing import Callable, Literal, Optional, Union
 
 import numpy as np
 from docplex.mp.model import Model
@@ -207,7 +207,7 @@ class Solver:
         min_distance: float = MOPTA_CONSTANTS["min_distance"],
         timelimit: Optional[float] = 10,
         verbose: bool = False,
-    ) -> Solution:
+    ) -> None:
         """
         Solves the optimization problem for EV charger placement.
 
@@ -233,6 +233,9 @@ class Solver:
                 "Number of fixed locations is larger than the number of potential charging locations. "
                 "Please add more locations."
             )
+        else:
+            # sanity check passed
+            self.added_locations.append(self.coordinates_potential_cl)  # add initial locations
 
         # compute all maximum service levels to check for infeasibility
         # if one is below the minimum sla then raise
@@ -264,9 +267,11 @@ class Solver:
         self.add_new_decision_variables(K=self.J)
         self.update_constraints(K=self.J)
         self.update_objective(K=self.J)
-        self.update_kpis()
         # set fixed charge cost()
         self.set_fixed_charge_cost()
+        # update kpis
+        self.update_kpis()
+
         # set current objective value as nan (not solved yet)
         current_objective_value = float("nan")
 
@@ -347,10 +352,11 @@ class Solver:
             if self.streamlit_callback is not None:
                 self.streamlit_callback(self)
 
-            break_flag, mip_start = self.apply_improvement_heuristic(
+            mip_start = self.apply_improvement_heuristic(
                 solution=solution, min_distance=min_distance, counting_radius=counting_radius, filter_locations=True
             )
-            if break_flag:
+            if not isinstance(mip_start, SolveSolution):
+                # no improved locations found -> stop the optimization routine
                 break
 
             # Add mipstart to model
@@ -364,22 +370,32 @@ class Solver:
 
         # Optimization finished
         end_time = time.time()
-        # clear model to free resources
-        self.m.end()
 
         # Always return the solution with the best locations
         # That means the returned solution has no filtering applied
         final_solution_start = self.apply_improvement_heuristic(solution=solution, filter_locations=False)
-        if final_solution_start is None:
-            raise
+        if not isinstance(final_solution_start, SolveSolution):
+            raise ValueError("No new locations found, which should not have happened. Please check code.")
+
         final_solution = Solution(
-            v=self.v, w=self.w, u=self.u, sol=final_solution_start, sol_det=solve_details, S=self.S, m=self.m
+            v=self.v,
+            w=self.w,
+            u=self.u,
+            sol=final_solution_start,
+            sol_det=solve_details,
+            S=self.S,
+            m=self.m,
         )
 
-        logger.info(f"Optimization finished in {round(end_time - start_time, 2)} seconds.")
-        logger.info(f"There are {b_start.sum()} built locations with in total {n_start.sum()} chargers.")
+        # add to solutions
+        self.solutions.append(final_solution)
 
-        return final_solution_start
+        # clear model to free resources
+        self.m.end()
+
+        logger.info(f"Optimization finished in {round(end_time - start_time, 2)} seconds.")
+
+        return None
 
     def apply_improvement_heuristic(
         self,
@@ -387,7 +403,7 @@ class Solver:
         min_distance: Optional[float] = None,
         counting_radius: Optional[float] = None,
         filter_locations: bool = False,
-    ) -> Tuple[bool, SolveSolution]:
+    ) -> Union[None, SolveSolution]:
         # compute for every built location its best location. Return that location and its indice
         new_potential_cl, relating_old_potential_cl_indices, cl_built_no_all_indices = self.find_improved_locations(
             built_indices=solution.cl_built_indices,
@@ -413,7 +429,7 @@ class Solver:
         n_new_potential_cl = len(new_potential_cl)
         if n_new_potential_cl == 0:
             logger.info("No new locations found -> stopping the optimization routine.")
-            return True, solution  # TDO check
+            return None
         else:  # add improved locations to solution
             self.added_locations.append(new_potential_cl)
 
@@ -441,7 +457,7 @@ class Solver:
 
         # mip start with new locations (allocate to improved)
         # generate new mip start
-        return False, self.get_mip_start(
+        mip_start = self.get_mip_start(
             u_sol=solution.u_sol,
             v_sol=solution.v_sol,
             w_sol=solution.w_sol,
@@ -450,6 +466,8 @@ class Solver:
             n_new_potential_cl=n_new_potential_cl,
             K=K,
         )
+
+        return mip_start
 
     def add_new_decision_variables(self, K: range):
         # setting new deicison variables for new potential cl
@@ -616,12 +634,6 @@ class Solver:
 
         logger.debug("KPIs set.")
 
-    def report_kpis(self, solution):
-        logger.info(f"KPIs {solution.name}:")
-
-        for kpi in self.m.iter_kpis():
-            logger.info(f"  - {kpi.name}: {round(self.m.kpi_value_by_name(name=kpi.name, solution=solution), 2)}")
-
     def filter_locations(
         self,
         improved_locations: np.ndarray,
@@ -667,7 +679,7 @@ class Solver:
         relating_old_potential_cl_indices = []  # the list of cl that are built and have vehicles allocated
         cl_built_no_all_indices = []  # indices of cl that are built but have no vehicles allocated
 
-        for j in tqdm(built_indices):
+        for j in tqdm(built_indices, desc="Finding improved locations for built chargers"):
             # find allocated vehicles and their ranges
             X_allocated = []
             ranges_allocated = []
