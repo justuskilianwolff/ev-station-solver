@@ -35,7 +35,13 @@ class Solution:
         self.costs = {kpi.name: round(m.kpi_value_by_name(name=kpi.name, solution=sol), 2) for kpi in m.iter_kpis()}
 
         # report both solutions
-        # TODO:    self.report_kpis(solution=sol)
+        self.kpis = self.get_kpis(model=m, solution=sol)
+
+    def __repr__(self) -> str:
+        return f"Solution(obj:{round(self.objective_value, 2)}, mip_gap:{self.mip_gap}, mip_gap_r:{self.mip_gap_relative}, n_pot_cl:{len(self.v_sol)})"
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     def set_location_indice_sets(self):
         cl_built_indices = np.argwhere(self.v_sol == 1).flatten()
@@ -43,3 +49,18 @@ class Solution:
 
         logger.debug(f"There are {len(cl_built_indices )} built and {len(cl_not_built_indices)} not built locations.")
         return cl_built_indices, cl_not_built_indices
+
+    def get_kpis(self, model: Model, solution: SolveSolution, log: bool = True):
+        # build dict
+        kpis = {}
+
+        for kpi in model.iter_kpis():
+            kpis[kpi.name] = kpi.solution_value
+
+        # if log
+        if log:
+            logger.info(f"KPIs {solution.name}:")
+            for kpi_name, kpi_value in kpis.items():
+                logger.info(f"  - {kpi_name}: {round(kpi_value, 2)}")
+
+        return kpis
