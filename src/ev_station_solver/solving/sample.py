@@ -11,7 +11,7 @@ from ev_station_solver.stochastic_functions import (
 
 
 class Sample:
-    def __init__(self, index: int, total_vehicle_locations: np.ndarray, coordinates_potential_cl: np.ndarray):
+    def __init__(self, index: int, total_vehicle_locations: np.ndarray, coordinates_cl: np.ndarray):
         ranges = generate_ranges(num=total_vehicle_locations.shape[0])  # ranges for each car
         charging_prob = ev_charging_probabilities(ranges=ranges)  # probability of charging for each car
         # binary mask of whether car is charging or not
@@ -24,7 +24,7 @@ class Sample:
         self.n_vehicles: int = self.vehicle_locations.shape[0]  # list of number of vehicles in sample
         self.I: range = range(self.n_vehicles)  # indices of vehicles in sample
         # distance matrix of vehicles in sample to cl
-        self.distance_matrix: np.ndarray = get_distance_matrix(self.vehicle_locations, coordinates_potential_cl)
+        self.distance_matrix: np.ndarray = get_distance_matrix(self.vehicle_locations, coordinates_cl)
         # reachabilitye matrix of vehicles in sample
         self.reachable: np.ndarray = (self.distance_matrix.T <= self.ranges).T
 
