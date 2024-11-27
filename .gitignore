@@ -172,3 +172,6 @@ requirements*.lock
 
 # dont track test files on the root directory
 /test*.*
+
+# dont track vscode
+.vscode/
