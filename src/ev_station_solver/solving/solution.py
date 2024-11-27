@@ -24,7 +24,6 @@ class Solution:
             self.u_sol[-1] = self.u_sol[-1].round().astype(dtype)
 
         # get solve information
-        self.objective_value = sol.objective_value
         self.mip_gap = sol_det.gap  # obtain mip gap
         self.mip_gap_relative = sol_det.mip_relative_gap  # obtain relative mip gap
 
@@ -38,7 +37,7 @@ class Solution:
         self.kpis = self.get_kpis(model=m, solution=sol)
 
     def __repr__(self) -> str:
-        return f"Solution(obj:{round(self.objective_value, 2)}, mip_gap:{self.mip_gap}, mip_gap_r:{self.mip_gap_relative}, n_pot_cl:{len(self.v_sol)})"
+        return f"Solution(obj:{round(self.kpis['total_cost'], 2)}, mip_gap:{self.mip_gap}, mip_gap_r:{self.mip_gap_relative}, n_pot_cl:{len(self.v_sol)})"
 
     def __str__(self) -> str:
         return self.__repr__()

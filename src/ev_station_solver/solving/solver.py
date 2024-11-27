@@ -719,7 +719,7 @@ class Solver:
 
     def check_stable(self, warmstart, epsilon: float = 10e-2):
         objective_warmstart = self.m.kpi_value_by_name(name="total_cost", solution=warmstart)
-        if abs(self.solutions[-1].objective_value - objective_warmstart) <= epsilon:
+        if abs(self.solutions[-1].kpis["total_cost"] - objective_warmstart) <= epsilon:
             return True
         else:
             return False
