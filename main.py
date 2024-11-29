@@ -19,7 +19,7 @@ s = Solver(
 # compute number of initial locations
 s.add_initial_locations(n_clusters, mode="k-means", seed=0)
 s.add_initial_locations(n_clusters, mode="random")
-s.add_samples(num=2)
+s.add_samples(num=1)
 s.solve()
 
 best_sol = s.solutions[-1]  # take last solution (the one with optimal locations without filtering)
@@ -30,6 +30,7 @@ v = Validator(
     service_level=service_level,
     sol=best_sol,
 )
+v.validate()
 print("finished")
 
 

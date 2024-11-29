@@ -2,9 +2,7 @@ import numpy as np
 from docplex.mp.model import Model
 
 from ev_station_solver.constants import MOPTA_CONSTANTS
-from ev_station_solver.helper_functions import (
-    compute_maximum_matching,
-)
+from ev_station_solver.helper_functions import compute_maximum_matching
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.sample import Sample
 from ev_station_solver.solving.solution import Solution
@@ -83,15 +81,11 @@ class Validator:
             s = Sample(index=i, total_vehicle_locations=self.vehicles_locations, coordinates_cl=self.coordinates_cl)
 
             # compute attainable service level
-            logger.debug("  - Checking what service level is attainable.")
-            attainable_service_level = compute_maximum_matching(w=self.w_sol, reachable=s.reachable)
-            service_level = (
-                self.service_level if attainable_service_level >= self.service_level else attainable_service_level
-            )
+            attainable_sl = compute_maximum_matching(w=self.w_sol, reachable=s.reachable)
+            service_level = self.service_level if attainable_sl >= self.service_level else attainable_sl
 
             logger.debug(
-                f"  - Attainable service level: {round(attainable_service_level * 100, 2)}% "
-                f"(set to {round(service_level * 100, 2)})"
+                f"  - Attainable service level: {round(attainable_sl * 100, 2)}% (set to {round(service_level * 100, 2)})"
             )
 
             # TODO: check if this is correct
