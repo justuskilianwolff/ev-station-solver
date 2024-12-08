@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 
 class Solution:
-    def __init__(self, sol_det: SolveDetails, sol: SolveSolution, m: Model) -> None:
+    def __init__(self, sol_det: SolveDetails, sol: SolveSolution, m: Model, log: bool = True) -> None:
         # get solve information
         self.mip_gap = sol_det.gap  # obtain mip gap
         self.mip_gap_relative = sol_det.mip_relative_gap  # obtain relative mip gap
@@ -19,7 +19,7 @@ class Solution:
         self.costs = {kpi.name: round(m.kpi_value_by_name(name=kpi.name, solution=sol), 2) for kpi in m.iter_kpis()}
 
         # report both solutions
-        self.kpis = self.get_kpis(model=m, solution=sol)
+        self.kpis = self.get_kpis(model=m, solution=sol, log=log)
 
     def __repr__(self) -> str:
         return f"Solution(obj:{round(self.kpis['total_cost'], 2)}, mip_gap:{self.mip_gap}, mip_gap_r:{self.mip_gap_relative})"
@@ -27,7 +27,7 @@ class Solution:
     def __str__(self) -> str:
         return self.__repr__()
 
-    def get_kpis(self, model: Model, solution: SolveSolution, log: bool = True):
+    def get_kpis(self, model: Model, solution: SolveSolution, log: bool):
         # build dict
         kpis = {}
 
@@ -44,8 +44,30 @@ class Solution:
 
 
 class LocationSolution(Solution):
-    def __init__(self, v, w, u, sol: SolveSolution, sol_det: SolveDetails, S: list[Sample], m: Model) -> None:
-        super().__init__(sol_det=sol_det, sol=sol, m=m)
+    """Solution for the location improvement problem."""
+
+    def __init__(
+        self,
+        v: np.ndarray,
+        w: np.ndarray,
+        u: list[np.ndarray],
+        sol: SolveSolution,
+        sol_det: SolveDetails,
+        S: list[Sample],
+        m: Model,
+    ) -> None:
+        """Create a location solution object.
+
+        Args:
+            v (np.ndarray): decision variable for building a charging location
+            w (np.ndarray): decision variable for how many chargers to build at charging location
+            u (list[np.ndarray]): allocatin solution
+            sol (SolveSolution): docplex solution object
+            sol_det (SolveDetails): docplex solve details object
+            S (list[Sample]): list of samples
+            m (Model): docplex model
+        """
+        super().__init__(sol_det=sol_det, sol=sol, m=m, log=True)
 
         # extract solution
         self.v_sol = np.array(sol.get_value_list(dvars=v)).round().astype(float)
@@ -60,7 +82,13 @@ class LocationSolution(Solution):
         # set indice sets for solution
         self.cl_built_indices, self.cl_not_built_indices = self.set_location_indice_sets()
 
-    def set_location_indice_sets(self):
+    def set_location_indice_sets(self) -> tuple[np.ndarray, np.ndarray]:
+        """Obtain the indices of built and not built locations.
+
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: list of indices for built and not built locations
+        """
         cl_built_indices = np.argwhere(self.v_sol == 1).flatten()
         cl_not_built_indices = np.argwhere(self.v_sol == 0).flatten()
 
@@ -79,7 +107,18 @@ class ValidationSolution(Solution):
         service_level: float,
         desired_service_level: float,
     ) -> None:
-        super().__init__(sol_det=sol_det, sol=sol, m=m)
+        """Create a validation solution object.
+
+        Args:
+            u (np.ndarray): the allocation solution
+            sol (SolveSolution): docplex solution object
+            sol_det (SolveDetails): docplex solve details object
+            s (Sample): sample object
+            m (Model): docplex model
+            service_level (float): attained service level
+            desired_service_level (float): desired service level
+        """
+        super().__init__(sol_det=sol_det, sol=sol, m=m, log=False)
 
         # obtain u solutions
         self.u_sol = np.zeros(s.reachable.shape)

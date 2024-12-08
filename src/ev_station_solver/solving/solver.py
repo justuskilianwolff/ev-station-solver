@@ -11,10 +11,7 @@ from tqdm import tqdm
 
 from ev_station_solver.constants import MOPTA_CONSTANTS
 from ev_station_solver.errors import IntegerInfeasible
-from ev_station_solver.helper_functions import (
-    compute_maximum_matching,
-    get_distance_matrix,
-)
+from ev_station_solver.helper_functions import compute_maximum_matching, get_distance_matrix
 from ev_station_solver.location_improvement import find_optimal_location
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.sample import Sample
@@ -28,7 +25,7 @@ class Solver:
     def __init__(
         self,
         vehicle_locations: np.ndarray,
-        loglevel=logging.INFO,
+        loglevel: int = logging.INFO,
         build_cost: float = MOPTA_CONSTANTS["build_cost"],
         maintenance_cost: float = MOPTA_CONSTANTS["maintenance_cost"],
         drive_cost: float = MOPTA_CONSTANTS["drive_cost"],
@@ -109,6 +106,7 @@ class Solver:
         self.maintenance_cost = 0
         self.drive_charge_cost = 0
         self.fixed_charge_cost = 0
+        self.total_cost = 0
 
         # constraints
         self.fixed_station_number = fixed_station_number  # fixed number of built cl
@@ -209,7 +207,7 @@ class Solver:
         min_distance: float = MOPTA_CONSTANTS["min_distance"],
         timelimit: Optional[float] = 10,
         verbose: bool = False,
-    ) -> None:
+    ) -> list[LocationSolution]:
         """
         Solves the optimization problem for EV charger placement.
 
@@ -226,14 +224,13 @@ class Solver:
             ValueError: If the model is infeasible.
 
         Returns:
-            None
+            list[LocationSolution]: A list of solutions for each iteration of the optimization routine
         """
 
         # sanity check for at least the number of fixed locations
         if (self.fixed_station_number is not None) and (self.fixed_station_number > self.n_potential_cl):
             raise ValueError(
-                "Number of fixed locations is larger than the number of potential charging locations. "
-                "Please add more locations."
+                "Number of fixed locations is larger than the number of potential charging locations. Please add more locations."
             )
         else:
             # sanity check passed
@@ -382,13 +379,7 @@ class Solver:
             raise ValueError("No new locations found, which should not have happened. Please check code.")
 
         final_solution = LocationSolution(
-            v=self.v,
-            w=self.w,
-            u=self.u,
-            sol=final_solution_start,
-            sol_det=solve_details,
-            S=self.S,
-            m=self.m,
+            v=self.v, w=self.w, u=self.u, sol=final_solution_start, sol_det=solve_details, S=self.S, m=self.m
         )
 
         # add to solutions
@@ -399,19 +390,33 @@ class Solver:
 
         logger.info(f"Optimization finished in {round(end_time - start_time, 2)} seconds.")
 
-        return None
+        return self.solutions
 
     def apply_improvement_heuristic(
         self,
-        solution,
+        solution: LocationSolution,
         min_distance: Optional[float] = None,
         counting_radius: Optional[float] = None,
         filter_locations: bool = False,
     ) -> Union[None, SolveSolution]:
+        """Apply the improvement heuristic to the current solution.
+
+        Args:
+            solution (LocationSolution): current solution to the location improvement problem
+            min_distance (Optional[float], optional): minimum distance for filtering. Defaults to None.
+            counting_radius (Optional[float], optional): counting radius for filtering. Defaults to None.
+            filter_locations (bool, optional): whether to filter locations or apply improvement to all built locations. Defaults to False.
+
+        Raises:
+            ValueError: min distance not set if filtering is applied
+            ValueError: counting radius not set if filtering is applied
+
+        Returns:
+            Union[None, SolveSolution]: if no new locations are found, return None. Otherwise, return the mip start with the new locations.
+        """
         # compute for every built location its best location. Return that location and its indice
         new_potential_cl, relating_old_potential_cl_indices, cl_built_no_all_indices = self.find_improved_locations(
-            built_indices=solution.cl_built_indices,
-            u_sol=solution.u_sol,
+            built_indices=solution.cl_built_indices, u_sol=solution.u_sol
         )
 
         if filter_locations:
@@ -434,6 +439,7 @@ class Solver:
         if n_new_potential_cl == 0:
             logger.info("No new locations found -> stopping the optimization routine.")
             return None
+
         else:  # add improved locations to solution
             self.added_locations.append(new_potential_cl)
 
@@ -444,7 +450,7 @@ class Solver:
         # update locations
         self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, new_potential_cl))
         # update distances and reachable
-        self.update_distances_reachable(v=n_new_potential_cl, improved_locations=new_potential_cl, K=K)
+        self.update_distances_reachable(n_new_cl=n_new_potential_cl, improved_locations=new_potential_cl, K=K)
 
         # update the model with new locations
         self.add_new_decision_variables(K=K)
@@ -474,31 +480,44 @@ class Solver:
         return mip_start
 
     def add_new_decision_variables(self, K: range):
-        # setting new deicison variables for new potential cl
+        """Add new decision variables for new locations.
+
+        Args:
+            K (range): new locations added to the problem
+        """
         logger.info("Adding new decision variables...")
 
         self.add_new_dv_v(K=K)
         self.add_new_dv_w(K=K)
+
         for s in self.S:
             self.add_new_dv_u_s(s=s, K=K)
 
     def add_new_dv_v(self, K: range) -> None:
+        """Add binary variables v_k for each location k in K.
+
+        Args:
+            K (range): new locations added to the problem
         """
-        Create binary variables v_k for each location k in K
-        :param K: range of (some) locations
-        :return: b
-        """
+
         self.v = np.append(self.v, np.array([self.m.binary_var(name=f"v_{k}") for k in K]))
 
     def add_new_dv_w(self, K: range) -> None:
-        """
-        Create integer variables n_k for each location k in K
-        :param K: range of (some) locations
-        :return: n
+        """Add integer variables w_k for each location k in K.
+
+        Args:
+            K (range): new locations added to the problem
         """
         self.w = np.append(self.w, np.array([self.m.integer_var(name=f"w_{k}") for k in K]))
 
-    def add_new_dv_u_s(self, s: Sample, K: range):
+    def add_new_dv_u_s(self, s: Sample, K: range) -> None:
+        """Add binary variables u_{s, i, k} for each sample s, vehicle i and location k in K.
+
+        Args:
+            s (Sample): current sample
+            K (range): new locations added to the problem
+        """
+
         created_u_s = np.array(
             [self.m.binary_var(name=f"u_{s}_{i}_{k}") if s.reachable[i, k] else 0 for i in s.I for k in K]
         )
@@ -506,7 +525,12 @@ class Solver:
         self.u[s.index] = np.concatenate((self.u[s.index], created_u_s), axis=1)
 
     def update_constraints(self, K: range) -> None:
-        logger.info("Adding constraints...")
+        """Update constraints for new locations.
+
+        Args:
+            K (range): new locations added to the problem
+        """
+        logger.info("Updating constraints...")
         if self.fixed_station_number is not None:
             self.update_fixed_station_number_constraint(K=K)
 
@@ -515,11 +539,15 @@ class Solver:
 
         for s in self.S:
             self.add_max_queue_constraints(s=s, K=K, queue_size=self.queue_size)
-            # self.add_allocation_constraints(s=s, K=K)
             self.update_service_constraint(s=s, K=K)
             self.update_allocation_constraints(s, K=K)
 
     def update_fixed_station_number_constraint(self, K: range) -> None:
+        """Update the fixed station number constraint (include the new locations).
+
+        Args:
+            K (range): new locations added to the problem
+        """
         # try to get the constraint by name
         constraint = self.m.get_constraint_by_name("fixed_station_number")
         left_sum_K = self.m.sum(self.v[k] for k in K)
@@ -533,24 +561,37 @@ class Solver:
             self.fixed_station_number_constraint = constraint.left_expr.add(left_sum_K)
 
     def add_w_lt_mv_constraints(self, K: range) -> None:
-        logger.debug("Adding 'w <= v * station_upperbound' constraints.")
+        """Adding the 'w <= m * v' constraints for new locations, where m is the upper bound of stations per station.
+        This ensures that w is only positive if v is positive (if stations are built, location is built).
+
+        Args:
+            K (range): new locations added to the problem
+        """
         new_w_lt_mv_constraints = self.m.add_constraints(
-            (self.w[k] <= self.v[k] * self.station_ub for k in K),
-            names=(f"number_w_{k}" for k in K),
+            (self.w[k] <= self.v[k] * self.station_ub for k in K), names=(f"number_w_{k}" for k in K)
         )
         self.w_lt_mv_constraints += new_w_lt_mv_constraints
 
     def add_v_lt_w_constraints(self, K: range) -> None:
-        logger.debug("Adding 'v <= w' constraints.")
+        """Adding the 'v <= w' constraints for new locations. This ensures that v is only positive if w is positive (if location is built, stations are built).
+
+        Args:
+            K (range): new locations added to the problem
+        """
         new_v_lt_mv_constraints = self.m.add_constraints(
-            (self.v[k] <= self.w[k] for k in K),
-            names=(f"number_v_{k}" for k in K),
+            (self.v[k] <= self.w[k] for k in K), names=(f"number_v_{k}" for k in K)
         )
         self.v_lt_w_constraints += new_v_lt_mv_constraints
 
     def add_max_queue_constraints(self, s: Sample, K: range, queue_size: int) -> None:
-        # for every new station create new allocation constraints
-        logger.debug("Adding max queue constraints (allocated vehicles <= max queue).")
+        """Adding the 'allocated vehicles <= max queue' constraints for new locations.
+        Vehicles are only allocated to a station if the station is built and max queue is not exceeded.
+
+        Args:
+            s (Sample): sample
+            K (range): new locations added to the problem
+            queue_size (int): allowed queue size at cl
+        """
         new_max_queue_constraints = self.m.add_constraints(
             (self.m.sum(self.u[s.index][i, k] for i in s.I if s.reachable[i, k]) <= queue_size * self.w[k] for k in K),
             names=(f"allocation_qw_{s}_{k}" for k in K),
@@ -558,6 +599,12 @@ class Solver:
         self.max_queue_constraints += new_max_queue_constraints
 
     def update_service_constraint(self, s: Sample, K: range) -> None:
+        """Update the service constraint for the sample s (at least XX% of vehicles are allocated to a station).
+
+        Args:
+            s (Sample): sample
+            K (range): new locations added to the problem
+        """
         logger.debug(f"Adding service constraint (min. {self.service_level * 100}% of vehicles are allocated).")
 
         constraint = self.m.get_constraint_by_name(f"service_level_{s}")
@@ -572,7 +619,13 @@ class Solver:
             self.service_constraints[s.index] = constraint.left_expr.add(left_sum_K)
 
     def update_allocation_constraints(self, s: Sample, K: range) -> None:
-        logger.debug("Adding allocation constraints (every vehicle is allocated to at most one station).")
+        """Update the allocation constraints for the sample s (every vehicle is allocated to at most one station).
+
+        Args:
+            s (Sample): sample
+            K (range): new locations added to the problem
+        """
+        logger.debug("Adding allocation constraints (every vehicle is allocated to at mosts one station).")
         for i in s.I:
             constraint = self.m.get_constraint_by_name(f"charger_allocation_{s}_{i}")
             left_sum_K = self.m.sum(self.u[s.index][i, k] for k in K if s.reachable[i, k])
@@ -585,52 +638,78 @@ class Solver:
             else:
                 self.allocation_constraints[s.index][i] = constraint.left_expr.add(left_sum_K)
 
-    def update_objective(self, K: range):
+    def update_objective(self, K: range) -> None:
+        """Update the objective function with the new locations.
+
+        Args:
+            K (range): new locations added to the problem
+        """
         self.add_to_build_cost(K=K)
         self.add_to_maintenance_cost(K=K)
         self.add_to_drive_charge_cost(K=K)
 
-        # set objective
-        self.m.minimize(
+        # update total cost
+        self.total_cost = (
             self.build_cost
             + self.maintenance_cost
             + 365 / len(self.S) * self.drive_charge_cost
             + 365 / len(self.S) * self.fixed_charge_cost
         )
+
+        self.m.minimize(self.total_cost)
         logger.debug("Objective set.")
 
     def set_fixed_charge_cost(self):
+        """Set the fixed charge cost summed across all samples"""
         # independent of K
-        self.fixed_charge_cost = sum(
-            s.get_fixed_charge_cost(charge_cost_param=self.charge_cost_param) for s in self.S
-        )  # which one is this? TODO: also drive included
+        self.fixed_charge_cost = sum(s.get_fixed_charge_cost(charge_cost_param=self.charge_cost_param) for s in self.S)
 
     def add_to_build_cost(self, K: range):
+        """Add the build cost for the new locations to the total build cost.
+
+        Args:
+            K (range): new locations added to the problem
+        """
         self.build_cost += self.build_cost_param * self.m.sum(self.v[k] for k in K)
 
     def add_to_maintenance_cost(self, K: range):
+        """Add the maintenance cost for the new locations to the total maintenance cost.
+
+        Args:
+            K (range): new locations added to the problem
+        """
         self.maintenance_cost += self.maintenance_cost_param * self.m.sum(self.w[k] for k in K)
 
     def add_to_drive_charge_cost(self, K: range):
+        """Add the drive charge cost (driving to the allocated charging locatin and charging for that amount).
+        The amount to fill up to full range is added via add_fixed_charge_cost
+
+        Args:
+            K (range): new locations added to the problem
+        """
         self.drive_charge_cost += sum(self.get_drive_charge_cost(s=s, K=K) for s in self.S)
 
     def get_drive_charge_cost(self, s: Sample, K: range):
+        """Get the drive charge cost for the new locations for the current sample
+
+        Args:
+            s (Sample): sample
+            K (range): new locations added to the problem
+
+        Returns:
+            np.ndarray: the drive_charge cost to the new locations
+        """
         return self.drive_charge_cost_param * self.m.sum(
             self.u[s.index][i, k] * s.distance_matrix[i, k] for i in s.I for k in K if s.reachable[i, k]
         )
 
     def update_kpis(self):
+        """Update the key performance indicators (KPIs) for the optimization problem with the most recent values."""
         # clear all kpis
         self.m.clear_kpis()
 
         # add new kpis
-        self.kpi_total = self.m.add_kpi(
-            self.build_cost
-            + self.maintenance_cost
-            + 365 / len(self.S) * self.drive_charge_cost
-            + 365 / len(self.S) * self.fixed_charge_cost,
-            "total_cost",
-        )
+        self.kpi_total = self.m.add_kpi(self.total_cost, "total_cost")
         self.kpi_build = self.m.add_kpi(self.build_cost, "build_cost")
         self.kpi_maintenance = self.m.add_kpi(self.maintenance_cost, "maintenance_cost")
         self.kpi_drive_charge = self.m.add_kpi(365 / len(self.S) * self.drive_charge_cost, "drive_charge_cost")
@@ -645,6 +724,17 @@ class Solver:
         min_distance: float = MOPTA_CONSTANTS["min_distance"],
         counting_radius: float = MOPTA_CONSTANTS["counting_radius"],
     ):
+        """Filter locations that are too close to other locations.
+
+        Args:
+            improved_locations (np.ndarray): complete list of improved locations
+            old_location_indices (np.ndarray): indices of old locations that are built
+            min_distance (float, optional): min distance to existing cl. Defaults to MOPTA_CONSTANTS["min_distance"].
+            counting_radius (float, optional): counting radius to count existing stations in. Defaults to MOPTA_CONSTANTS["counting_radius"].
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: improved locations and their old indices
+        """
         distances = get_distance_matrix(improved_locations, self.coordinates_potential_cl).min(axis=1)
         build_mask = distances > min_distance
         too_close = np.argwhere(~build_mask).flatten()
@@ -658,9 +748,7 @@ class Solver:
             number_vehicles_in_radius = (distances_vehicles < counting_radius).sum(axis=1) * MOPTA_CONSTANTS[
                 "mu_charging"
             ]  # multiply by expected charging prob
-
             # compute number of chargers in radius and how many are in radius
-
             distances_chargers = get_distance_matrix(improved_locations[too_close], self.coordinates_potential_cl)
             number_locations_radius = (distances_chargers < counting_radius).sum(axis=1) * 2 * self.station_ub
 
@@ -677,7 +765,18 @@ class Solver:
             logger.debug(f"The probabilities for building of chargers that are too close to others are {prob}.")
             return improved_locations[build_mask], old_location_indices[build_mask]
 
-    def find_improved_locations(self, built_indices: np.ndarray, u_sol: list):
+    def find_improved_locations(
+        self, built_indices: np.ndarray, u_sol: list
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Find improved locations for built chargers.
+
+        Args:
+            built_indices (np.ndarray): built indices of chargers
+            u_sol (list): allocation solution
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, np.ndarray]: new_potential_cl, relating_old_potential_cl_indices, cl_built_no_all_indices
+        """
         # create lists for improved locations and their old indices (used for warmstart)
         new_potential_cl = []
         relating_old_potential_cl_indices = []  # the list of cl that are built and have vehicles allocated
@@ -721,24 +820,37 @@ class Solver:
 
         return new_potential_cl, relating_old_potential_cl_indices, cl_built_no_all_indices
 
-    def check_stable(self, warmstart, epsilon: float = 10e-2):
+    def check_stable(self, warmstart: SolveSolution, epsilon: float = 10e-2) -> bool:
+        """Check if the solution is stable.
+
+        Args:
+            warmstart (SolveSolution): the warmstart solution (the created solution with improved locations)
+            epsilon (float, optional): The epsilon in objective value. Defaults to 10e-2.
+
+        Returns:
+            bool: whether the solution is stable or not
+        """
         objective_warmstart = self.m.kpi_value_by_name(name="total_cost", solution=warmstart)
         if abs(self.solutions[-1].kpis["total_cost"] - objective_warmstart) <= epsilon:
             return True
         else:
             return False
 
-    def update_distances_reachable(self, v: int, improved_locations: np.ndarray, K: range):
+    def update_distances_reachable(self, n_new_cl: int, improved_locations: np.ndarray, K: range):
+        """Update the distances and reachable matrices for the new locations
+
+        Args:
+            n_new_cl (int): number of new locations
+            improved_locations (np.ndarray): indices of new locations
+            K (range): new locations added to the problem
+        """
         for s in self.S:
+            # add new distances
             s.distance_matrix = np.concatenate(
-                (
-                    s.distance_matrix,
-                    get_distance_matrix(s.vehicle_locations, improved_locations),
-                ),
-                axis=1,
-            )  # add new distances
+                (s.distance_matrix, get_distance_matrix(s.vehicle_locations, improved_locations)), axis=1
+            )
             new_reachable = np.array([s.distance_matrix[i, k] <= s.ranges[i] for i in s.I for k in K]).reshape(
-                s.n_vehicles, v
+                s.n_vehicles, n_new_cl
             )
             s.reachable = np.concatenate((s.reachable, new_reachable), axis=1)
 
@@ -751,7 +863,21 @@ class Solver:
         cl_built_no_all_indices: np.ndarray,
         n_new_potential_cl: int,
         K: range,
-    ):
+    ) -> SolveSolution:
+        """Obtain a MIP start for the optimization problem.
+
+        Args:
+            u_sol (list): allocation solution
+            v_sol (np.ndarray): v solution
+            w_sol (np.ndarray): w solution
+            old_potential_cl_indices (np.ndarray): old potential cl indices
+            cl_built_no_all_indices (np.ndarray): cl built no all indices (built but no vehicles allocated)
+            n_new_potential_cl (int): number of new potential cl
+            K (range): new locations added to the problem
+
+        Returns:
+            SolveSolution: warmstart solution
+        """
         # create start arrays with zeros for new locations
         v_start, w_start, u_start = self.create_mip_arrays(v_sol, w_sol, u_sol, n_new_potential_cl)
 
@@ -768,9 +894,7 @@ class Solver:
 
         # check whether there are built locations that are empty
         v_start, w_start = self.set_built_but_empty_zero(
-            v_start=v_start,
-            w_start=w_start,
-            cl_built_no_all_indices=cl_built_no_all_indices,
+            v_start=v_start, w_start=w_start, cl_built_no_all_indices=cl_built_no_all_indices
         )
 
         # create mip solution from start arrays
@@ -778,7 +902,20 @@ class Solver:
 
         return mip_start
 
-    def create_mip_arrays(self, v_sol, w_sol, u_sol, n_new_potential_cl):
+    def create_mip_arrays(
+        self, v_sol: np.ndarray, w_sol: np.ndarray, u_sol: list[np.ndarray], n_new_potential_cl: int
+    ) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+        """Create MIP arrays for the optimization problem for the decision variables.
+
+        Args:
+            v_sol (np.ndarray): v solution
+            w_sol (np.ndarray): w solution
+            u_sol (list[np.ndarray]): u solution
+            n_new_potential_cl (int): number of new potential cl
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, list[np.ndarray]]: v_start, w_start, u_start
+        """
         v_start = np.concatenate((v_sol, np.zeros(n_new_potential_cl, dtype=float)))
         w_start = np.concatenate((w_sol, np.zeros(n_new_potential_cl, dtype=float)))
         u_start = []
@@ -790,7 +927,30 @@ class Solver:
             )
         return v_start, w_start, u_start
 
-    def set_mip_array_new_locations(self, v_start, w_start, u_start, w_sol, u_sol, old_potential_cl_indices, K):
+    def set_mip_array_new_locations(
+        self,
+        v_start: np.ndarray,
+        w_start: np.ndarray,
+        u_start: list[np.ndarray],
+        w_sol: np.ndarray,
+        u_sol: list[np.ndarray],
+        old_potential_cl_indices: np.ndarray,
+        K: range,
+    ) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+        """In the MIP start, set the new locations to built and copy their old n value.
+
+        Args:
+            v_start (np.ndarray): v start
+            w_start (np.ndarray): w start
+            u_start (list[np.ndarray]): u start
+            w_sol (np.ndarray): w solution for the old locations
+            u_sol (list[np.ndarray]): u solution for the old locations
+            old_potential_cl_indices (np.ndarray): indices of old potential cl
+            K (range): range of new locations
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, list[np.ndarray]]: v_start, w_start, u_start
+        """
         v_start[K] = 1
         w_start[K] = w_sol[old_potential_cl_indices]
         # set old locations to not built
@@ -807,7 +967,19 @@ class Solver:
                         logger.warning(f"Vehicle {i} cannot reach location {K[k]}")
         return v_start, w_start, u_start
 
-    def set_built_but_empty_zero(self, v_start, w_start, cl_built_no_all_indices):
+    def set_built_but_empty_zero(
+        self, v_start: np.ndarray, w_start: np.ndarray, cl_built_no_all_indices: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Set built locations with no vehicles allocated to 0, i.e. not built (v and w).
+
+        Args:
+            v_start (np.ndarray): v start
+            w_start (np.ndarray): w start
+            cl_built_no_all_indices (np.ndarray): old potential cl indices
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: v_start, w_start
+        """
         if len(cl_built_no_all_indices) > 0:
             logger.info(
                 f"Found {len(cl_built_no_all_indices)} built locations with no vehicles allocated -> set them to 0."
@@ -818,7 +990,17 @@ class Solver:
 
         return v_start, w_start
 
-    def create_mip_solution(self, v_start, w_start, u_start):
+    def create_mip_solution(self, v_start: np.ndarray, w_start: np.ndarray, u_start: list[np.ndarray]) -> SolveSolution:
+        """Create a MIP solution for the optimization problem from the start arrays.
+
+        Args:
+            v_start (np.ndarray): v start
+            w_start (np.ndarray): w start
+            u_start (list[np.ndarray]): u start
+
+        Returns:
+            SolveSolution: mip start solution for the optimization problem from the start arrays
+        """
         # construct the MIP start with the arrays computed above
         mip_start = self.m.new_solution()
         # name solution

@@ -39,6 +39,7 @@ class Validator:
         self.sol = sol
 
         # params
+        self.charge_cost_param = charge_cost
         self.drive_charge_cost_param = drive_cost + charge_cost
 
         # model
@@ -73,8 +74,7 @@ class Validator:
     def validate(self, desired_service_level: float, n_iter: int = 50, verbose: bool = False):
         logger.info(f"Starting allocation problem with {n_iter} iterations.")
 
-        # set time limit
-
+        # set decision variables
         self.set_decision_variables()
 
         for i in range(n_iter):
@@ -87,13 +87,12 @@ class Validator:
 
             # compute attainable service level
             attainable_service_level = compute_maximum_matching(w=self.w_sol, reachable=s.reachable)
-            service_level = (
-                desired_service_level if attainable_service_level >= desired_service_level else attainable_service_level
-            )
-
-            logger.debug(
-                f"  - Attainable service level: {round(attainable_service_level * 100, 2)}% (set to {round(service_level * 100, 2)})"
-            )
+            if attainable_service_level >= desired_service_level:
+                logger.debug("Service level is  attainable.")
+                service_level = desired_service_level
+            else:
+                logger.debug("Service level is not attainable.")
+                service_level = attainable_service_level
 
             # get decision variables for this sample
             u_sample = self.update_decision_variables(s=s)
@@ -137,31 +136,40 @@ class Validator:
 
         # check that lists are actually not empty
         if len(feasible_solutions) != 0:
-            logger.info(
-                f"- Mean objective value (feasible): ${round(np.mean([sol.kpis['total_cost'] for sol in feasible_solutions]), 2)}."
-            )
+            mean_objective_value = np.mean([sol.kpis["total_cost"] for sol in feasible_solutions])
+            logger.info(f"- Mean objective value (feasible): ${round(mean_objective_value, 2)}.")
 
         if len(infeasible_solutions) != 0:
+            mean_objective_value = np.mean([sol.kpis["total_cost"] for sol in infeasible_solutions])
+            mean_service_level = np.mean([sol.service_level for sol in infeasible_solutions]) * 100
+
             logger.info(
-                f"- Mean objective value (infeasible): ${round(np.mean([sol.kpis['total_cost'] for sol in infeasible_solutions]), 2)} with a mean service level "
-                f"of {np.round(np.mean([sol.service_level for sol in infeasible_solutions]) * 100, 2)}%."
+                f"- Mean objective value (infeasible): ${round(mean_objective_value, 2)} with a mean service level of {round(mean_service_level, 2)}%."
             )
 
         return self.solutions
 
     def set_decision_variables(self):
-        logger.info("Creating decision variables")
+        """Set initial decision variables for the expected number of vehicles"""
+
         # create a general u for the expexted number of vehicles
         u = np.array(
             [self.m.binary_var(name=f"u_{i}_{j}") for i in range(self.expected_number_vehicles) for j in self.J]
         ).reshape(self.expected_number_vehicles, self.n_cl)
 
-        logger.info("Decision variables added.")
-
         self.u = u
 
+        logger.info("Initial set of decision variables added.")
+
     def update_decision_variables(self, s: Sample) -> np.ndarray:
-        # set up ranges for problem
+        """Update the decision variables if sample is larger than already existing dvs. Also it returns the reachable vars for this sample
+
+        Args:
+            s (Sample): current sample
+
+        Returns:
+            np.ndarray: current decision variables
+        """
         # check if size of u is sufficient: if not -> extend u
         if s.n_vehicles > self.u.shape[0]:
             # append decision variables onto u
@@ -191,7 +199,7 @@ class Validator:
 
     def update_objective(self, u_sample: np.ndarray, s: Sample):
         # update objective terms
-        self.fixed_charge_cost = s.get_fixed_charge_cost(charge_cost_param=self.drive_charge_cost_param)
+        self.fixed_charge_cost = s.get_fixed_charge_cost(charge_cost_param=self.charge_cost_param)
         self.drive_charge_cost = self.drive_charge_cost_param * self.m.sum(u_sample * s.distance_matrix)
 
         self.m.minimize(self.build_cost + self.maintenance_cost + self.fixed_charge_cost + 365 * self.drive_charge_cost)
