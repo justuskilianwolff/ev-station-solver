@@ -70,6 +70,7 @@ def geometric_median(X, eps=1e-5):
 
 
 def compute_maximum_matching(w: np.ndarray, reachable: np.ndarray):
+    w = w.astype(int)  # convert to int
     graph = np.repeat(reachable, 2 * w, axis=1)  # TODO: make sure proper parameter is passed
     # DISCUSS with kit, how this is done
     result = maximum_bipartite_matching(csr_matrix(graph), perm_type="column")

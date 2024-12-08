@@ -30,3 +30,6 @@ class Sample:
 
     def __str__(self) -> str:
         return str(self.index)
+
+    def get_fixed_charge_cost(self, charge_cost_param: float):
+        return charge_cost_param * (250 - self.ranges).sum()

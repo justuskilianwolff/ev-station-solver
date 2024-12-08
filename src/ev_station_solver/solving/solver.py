@@ -18,7 +18,7 @@ from ev_station_solver.helper_functions import (
 from ev_station_solver.location_improvement import find_optimal_location
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.sample import Sample
-from ev_station_solver.solving.solution import Solution
+from ev_station_solver.solving.solution import LocationSolution
 
 # create logger
 logger = get_logger(__name__)
@@ -35,6 +35,7 @@ class Solver:
         charge_cost: float = MOPTA_CONSTANTS["charge_cost"],
         service_level: float = MOPTA_CONSTANTS["service_level"],
         station_ub: int = MOPTA_CONSTANTS["station_ub"],
+        queue_size: int = MOPTA_CONSTANTS["queue_size"],
         fixed_station_number: Optional[int] = None,
         streamlit_callback: Optional[Callable] = None,
     ):
@@ -85,6 +86,7 @@ class Solver:
         self.coordinates_potential_cl: np.ndarray = np.empty((0, 2))  # charging locations
         self.n_potential_cl: int = 0  # number of charging locations
         self.J = range(self.n_potential_cl)  # indices of potential charging locations
+        self.queue_size = queue_size
 
         # Samples
         self.S: list[Sample] = []
@@ -127,7 +129,7 @@ class Solver:
         self.kpi_total = None
 
         # solutions and added locations for each iteration
-        self.solutions: list[Solution] = []  # solutions for each iteration
+        self.solutions: list[LocationSolution] = []  # solutions for each iteration
         self.added_locations: list[np.ndarray] = []  # added locations in each iteration
 
         # streamlit
@@ -345,7 +347,9 @@ class Solver:
 
             # extract current solution
 
-            solution = Solution(v=self.v, w=self.w, u=self.u, sol=sol, sol_det=solve_details, S=self.S, m=self.m)
+            solution = LocationSolution(
+                v=self.v, w=self.w, u=self.u, sol=sol, sol_det=solve_details, S=self.S, m=self.m
+            )
             self.solutions.append(solution)
 
             # if a streamlit callback function was added -> call it
@@ -377,7 +381,7 @@ class Solver:
         if not isinstance(final_solution_start, SolveSolution):
             raise ValueError("No new locations found, which should not have happened. Please check code.")
 
-        final_solution = Solution(
+        final_solution = LocationSolution(
             v=self.v,
             w=self.w,
             u=self.u,
@@ -510,7 +514,7 @@ class Solver:
         self.add_v_lt_w_constraints(K=K)
 
         for s in self.S:
-            self.add_max_queue_constraints(s=s, K=K)
+            self.add_max_queue_constraints(s=s, K=K, queue_size=self.queue_size)
             # self.add_allocation_constraints(s=s, K=K)
             self.update_service_constraint(s=s, K=K)
             self.update_allocation_constraints(s, K=K)
@@ -544,11 +548,11 @@ class Solver:
         )
         self.v_lt_w_constraints += new_v_lt_mv_constraints
 
-    def add_max_queue_constraints(self, s: Sample, K: range, q: int = MOPTA_CONSTANTS["queue_size"]) -> None:
+    def add_max_queue_constraints(self, s: Sample, K: range, queue_size: int) -> None:
         # for every new station create new allocation constraints
         logger.debug("Adding max queue constraints (allocated vehicles <= max queue).")
         new_max_queue_constraints = self.m.add_constraints(
-            (self.m.sum(self.u[s.index][i, k] for i in s.I if s.reachable[i, k]) <= q * self.w[k] for k in K),
+            (self.m.sum(self.u[s.index][i, k] for i in s.I if s.reachable[i, k]) <= queue_size * self.w[k] for k in K),
             names=(f"allocation_qw_{s}_{k}" for k in K),
         )
         self.max_queue_constraints += new_max_queue_constraints
@@ -596,10 +600,10 @@ class Solver:
         logger.debug("Objective set.")
 
     def set_fixed_charge_cost(self):
-        self.fixed_charge_cost = sum(self.get_fixed_charge_cost(s=s) for s in self.S)  # independent of K
-
-    def get_fixed_charge_cost(self, s: Sample):
-        return self.charge_cost_param * (250 - s.ranges).sum()
+        # independent of K
+        self.fixed_charge_cost = sum(
+            s.get_fixed_charge_cost(charge_cost_param=self.charge_cost_param) for s in self.S
+        )  # which one is this? TODO: also drive included
 
     def add_to_build_cost(self, K: range):
         self.build_cost += self.build_cost_param * self.m.sum(self.v[k] for k in K)

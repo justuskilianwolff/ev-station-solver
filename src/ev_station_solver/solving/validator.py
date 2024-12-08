@@ -1,11 +1,12 @@
 import numpy as np
 from docplex.mp.model import Model
+from docplex.mp.sdetails import SolveDetails
 
 from ev_station_solver.constants import MOPTA_CONSTANTS
 from ev_station_solver.helper_functions import compute_maximum_matching
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.sample import Sample
-from ev_station_solver.solving.solution import Solution
+from ev_station_solver.solving.solution import LocationSolution, ValidationSolution
 
 # create logger
 logger = get_logger(__name__)
@@ -16,10 +17,11 @@ class Validator:
         self,
         coordinates_cl: np.ndarray,
         vehicle_locations: np.ndarray,
-        sol: Solution,
-        service_level: float,
+        sol: LocationSolution,
         drive_cost: float = MOPTA_CONSTANTS["drive_cost"],
         charge_cost: float = MOPTA_CONSTANTS["charge_cost"],
+        queue_size: int = MOPTA_CONSTANTS["queue_size"],
+        timelimit: int = 60,
     ):
         # vehicles
         self.vehicles_locations = vehicle_locations
@@ -31,46 +33,49 @@ class Validator:
         self.w_sol = sol.w_sol[sol.cl_built_indices]
         self.n_cl = len(self.coordinates_cl)
         self.J = range(self.n_cl)
+        self.queue_size: int = queue_size
 
         # solution
         self.sol = sol
 
         # params
-        self.service_level = service_level
         self.drive_charge_cost_param = drive_cost + charge_cost
+
         # model
         self.m = Model("Validation")
         self.u = np.empty((0, self.n_cl))
+
+        # constraints
+        self.allocated_one_charger_constraints: list = []
+        self.allocated_up_to_qn_constraints: list = []
+        self.service_level_constraints: list = []
+
+        # costs
+        self.build_cost = self.sol.kpis["build_cost"]
+        self.maintenance_cost = self.sol.kpis["maintenance_cost"]
+        self.fixed_charge_cost = None
+        self.drive_charge_cost = None
+
+        # kpis
+        self.kpi_maintenance = self.m.add_kpi(self.maintenance_cost, "maintenance_cost")  # constant
+        self.kpi_build = self.m.add_kpi(self.build_cost, "build_cost")  # constant
+        self.kpi_fixed_charge = None
+        self.kpi_drive_charge = None
+        self.kpi_total = None
+
+        # solutions
+        self.solutions: list[ValidationSolution] = []
+
         # since some decision variables in some samples have no effect -> turn off presolve
         self.m.parameters.preprocessing.presolve = 0  # type: ignore
+        self.m.parameters.timelimit.set(timelimit)  # type: ignore
 
-    def validate(
-        self,
-        n_iter: int = 50,
-        timelimit: int = 60,
-        verbose: bool = False,
-    ):
-        # initialize model
-        objective_values = []  # objective values of all solutions
-        build_cost = []
-        distance_cost = []
-        service_levels = []  # service levels of all solutions
-        mip_gaps = []  # mip gaps of all solutions
-
+    def validate(self, desired_service_level: float, n_iter: int = 50, verbose: bool = False):
         logger.info(f"Starting allocation problem with {n_iter} iterations.")
 
         # set time limit
-        self.m.parameters.timelimit.set(timelimit)  # type: ignore
 
-        # get fixed terms
-        build_cost = self.sol.kpis["build_cost"]
-        maintenance_cost = self.sol.kpis["maintenance_cost"]
-        fixed_charge_cost = self.sol.kpis["fixed_charge_cost"]
-        # build_maintenance_term = self.maintenance_cost_param * np.sum(v_sol_built) + self.build_cost_param * len(
-        #     v_sol_built
-        # )
-
-        u = self.set_decision_variables()
+        self.set_decision_variables()
 
         for i in range(n_iter):
             logger.info(f"Allocation iteration {i + 1}/{n_iter}.")
@@ -81,77 +86,68 @@ class Validator:
             s = Sample(index=i, total_vehicle_locations=self.vehicles_locations, coordinates_cl=self.coordinates_cl)
 
             # compute attainable service level
-            attainable_sl = compute_maximum_matching(w=self.w_sol, reachable=s.reachable)
-            service_level = self.service_level if attainable_sl >= self.service_level else attainable_sl
+            attainable_service_level = compute_maximum_matching(w=self.w_sol, reachable=s.reachable)
+            service_level = (
+                desired_service_level if attainable_service_level >= desired_service_level else attainable_service_level
+            )
 
             logger.debug(
-                f"  - Attainable service level: {round(attainable_sl * 100, 2)}% (set to {round(service_level * 100, 2)})"
+                f"  - Attainable service level: {round(attainable_service_level * 100, 2)}% (set to {round(service_level * 100, 2)})"
             )
 
-            # TODO: check if this is correct
-            self.update_decision_variables(s=s)
-            u_reachable = np.where(s.reachable, self.u[: s.n_vehicles, :], 0)  # define u for this sample
-            # TODO: what is u_reachable?
+            # get decision variables for this sample
+            u_sample = self.update_decision_variables(s=s)
 
-            # allocated up to one charger
-            self.m.add_constraints((self.m.sum(u_reachable[i, j] for j in self.J) <= 1 for i in s.I))
+            # set constraints
+            self.add_allocated_to_charger_constrainst(u_sample=u_sample, s=s)
+            self.add_allocated_to_2q_constrainst(u_sample=u_sample, s=s, queue_size=self.queue_size)
+            self.add_service_level_constraint(u_sample=u_sample, s=s, service_level=service_level)
 
-            logger.debug("  - Setting the 2 * n constraints.")
-            # allocated up to 2n
-            self.m.add_constraints((self.m.sum(u_reachable[i, j] for i in s.I) <= 2 * self.w_sol[j] for j in self.J))
+            self.update_objective(u_sample=u_sample, s=s)
+            self.update_kpis()
 
-            logger.debug(f"  - Setting the service level constraint to {round(service_level * 100, 2)}%.")
-            self.m.add_constraint(self.m.sum(u_reachable) / s.n_vehicles >= service_level)
-
-            logger.debug("  - Setting the objective function for the distance minimisation.")
-            self.m.minimize(
-                build_cost
-                + maintenance_cost
-                + fixed_charge_cost
-                + 365 * self.drive_charge_cost_param * self.m.sum(u_reachable * s.distance_matrix)
-            )
-
-            logger.debug("  - Starting the solve process.")
+            # solve the problem
             sol = self.m.solve(log_output=verbose, clean_before_solve=True)
+            # obtain solve details
+            sol_det = self.m.solve_details
+            if not isinstance(sol_det, SolveDetails):
+                raise ValueError("No solve details obtained...")
 
-            # report objective values
-            objective_value = sol.objective_value
-            # logger.debug(f"  - Objective value: ${round(objective_value, 2)}")
-            # logger.debug(f"  - Build cost: ${round(build_maintenance_term, 2)}")
-            # logger.debug(f"  - Constant term: ${round(constant_term, 2)}")
-            # logger.debug(f"  - Distance cost: ${round(objective_value - constant_term - build_maintenance_term, 2)}")
-
-            # TODO: subclass solution to hold also vlaidation resukt
-            # add values to lists
-            objective_values.append(sol.objective_value)
-            build_cost.append(build_maintenance_term)
-            distance_cost.append(objective_value - constant_term - build_maintenance_term)
-            service_levels.append(service_level)
-            mip_gaps.append(m.solve_details.gap)
+            # save solution
+            validation_solution = ValidationSolution(
+                u=u_sample,
+                sol=sol,
+                sol_det=sol_det,
+                s=s,
+                m=self.m,
+                service_level=service_level,
+                desired_service_level=desired_service_level,
+            )
+            self.solutions.append(validation_solution)
 
         # Clear model to free resources
         self.m.end()
 
-        # convert to numpy arrays
-        objective_values = np.array(objective_values)
-        service_levels = np.array(service_levels)
-        mip_gaps = np.array(mip_gaps)
-
-        i_infeasible = np.argwhere(service_levels < self.service_level).flatten()
-        feasible = np.argwhere(service_levels >= self.service_level).flatten()
+        # categorize solutions
+        feasible_solutions = [sol for sol in self.solutions if sol.feasible]
+        infeasible_solutions = [sol for sol in self.solutions if not sol.feasible]
 
         # Result logging
-        logger.info(f"Out of {n_iter} samples, {len(feasible)} are feasible.")
+        logger.info(f"Out of {n_iter} samples, {len(feasible_solutions)} are feasible.")
+
         # check that lists are actually not empty
-        if len(feasible) != 0:
-            logger.info(f"- Mean objective value (feasible): ${np.round(np.mean(objective_values[feasible]), 2)}.")
-        if len(i_infeasible) != 0:
+        if len(feasible_solutions) != 0:
             logger.info(
-                f"- Mean objective value (infeasible): ${np.round(np.mean(objective_values[i_infeasible]), 2)} with a mean service level "
-                f"of {np.round(np.mean(service_levels[i_infeasible]) * 100, 2)}%."
+                f"- Mean objective value (feasible): ${round(np.mean([sol.kpis['total_cost'] for sol in feasible_solutions]), 2)}."
             )
 
-        return objective_values, build_cost, distance_cost, service_levels, mip_gaps
+        if len(infeasible_solutions) != 0:
+            logger.info(
+                f"- Mean objective value (infeasible): ${round(np.mean([sol.kpis['total_cost'] for sol in infeasible_solutions]), 2)} with a mean service level "
+                f"of {np.round(np.mean([sol.service_level for sol in infeasible_solutions]) * 100, 2)}%."
+            )
+
+        return self.solutions
 
     def set_decision_variables(self):
         logger.info("Creating decision variables")
@@ -164,7 +160,7 @@ class Validator:
 
         self.u = u
 
-    def update_decision_variables(self, s: Sample):
+    def update_decision_variables(self, s: Sample) -> np.ndarray:
         # set up ranges for problem
         # check if size of u is sufficient: if not -> extend u
         if s.n_vehicles > self.u.shape[0]:
@@ -174,3 +170,44 @@ class Validator:
                 [self.m.binary_var(name=f"u_{i}_{j}") for i in range(s.n_vehicles - size, s.n_vehicles) for j in self.J]
             ).reshape(size, self.n_cl)
             self.u = np.concatenate((self.u, new_u), axis=0)
+
+        return np.where(s.reachable, self.u[: s.n_vehicles, :], 0)  # define u for this sample
+
+    def add_allocated_to_charger_constrainst(self, u_sample: np.ndarray, s: Sample):
+        # allocated up to one charger
+        constraints = self.m.add_constraints((self.m.sum(u_sample[i, j] for j in self.J) <= 1 for i in s.I))
+        self.allocated_one_charger_constraints.append(constraints)
+
+    def add_allocated_to_2q_constrainst(self, u_sample: np.ndarray, s: Sample, queue_size: int):
+        # allocated up to 2n
+        constraints = self.m.add_constraints(
+            (self.m.sum(u_sample[i, j] for i in s.I) <= queue_size * self.w_sol[j] for j in self.J)
+        )
+        self.allocated_up_to_qn_constraints.append(constraints)
+
+    def add_service_level_constraint(self, u_sample: np.ndarray, s: Sample, service_level: float):
+        constraint = self.m.add_constraint(self.m.sum(u_sample) / s.n_vehicles >= service_level)
+        self.service_level_constraints.append(constraint)
+
+    def update_objective(self, u_sample: np.ndarray, s: Sample):
+        # update objective terms
+        self.fixed_charge_cost = s.get_fixed_charge_cost(charge_cost_param=self.drive_charge_cost_param)
+        self.drive_charge_cost = self.drive_charge_cost_param * self.m.sum(u_sample * s.distance_matrix)
+
+        self.m.minimize(self.build_cost + self.maintenance_cost + self.fixed_charge_cost + 365 * self.drive_charge_cost)
+
+    def update_kpis(self):
+        # clear all kpis
+        self.m.clear_kpis()
+
+        # add new kpis
+        self.kpi_total = self.m.add_kpi(
+            self.build_cost + self.maintenance_cost + 365 * self.drive_charge_cost + 365 * self.fixed_charge_cost,
+            "total_cost",
+        )
+        self.kpi_build = self.m.add_kpi(self.build_cost, "build_cost")
+        self.kpi_maintenance = self.m.add_kpi(self.maintenance_cost, "maintenance_cost")
+        self.kpi_drive_charge = self.m.add_kpi(365 * self.drive_charge_cost, "drive_charge_cost")
+        self.kpi_fixed_charge = self.m.add_kpi(365 * self.fixed_charge_cost, "fixed_charge_cost")
+
+        logger.debug("KPIs set.")

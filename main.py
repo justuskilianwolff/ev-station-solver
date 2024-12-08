@@ -2,8 +2,12 @@ import logging
 
 from ev_station_solver.constants import MOPTA_CONSTANTS
 from ev_station_solver.loading import load_locations
+from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.solver import Solver
 from ev_station_solver.solving.validator import Validator
+
+logger = get_logger(__name__)
+
 
 # use given starting solutions
 locations = load_locations("small").sample(100).values
@@ -24,18 +28,6 @@ s.solve()
 
 best_sol = s.solutions[-1]  # take last solution (the one with optimal locations without filtering)
 
-v = Validator(
-    coordinates_cl=s.coordinates_potential_cl,
-    vehicle_locations=locations,
-    service_level=service_level,
-    sol=best_sol,
-)
-v.validate()
-print("finished")
-
-
-# objective_values, build_cost, distance_cost, service_levels, mip_gaps = mopta_solver.allocation_problem(
-#     locations_built=locations_built, v_sol_built=v_sol_built, n_iter=10
-# )
-
-# print("Test")
+v = Validator(coordinates_cl=s.coordinates_potential_cl, vehicle_locations=locations, sol=best_sol)
+v.validate(desired_service_level=service_level)
+logger.info("Finished")
