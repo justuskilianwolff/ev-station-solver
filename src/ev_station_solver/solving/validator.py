@@ -1,6 +1,7 @@
 import numpy as np
 from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
+from tqdm import tqdm
 
 from ev_station_solver.constants import MOPTA_CONSTANTS
 from ev_station_solver.helper_functions import compute_maximum_matching
@@ -77,8 +78,8 @@ class Validator:
         # set decision variables
         self.set_decision_variables()
 
-        for i in range(n_iter):
-            logger.info(f"Allocation iteration {i + 1}/{n_iter}.")
+        logger.info("Starting validation iterations.")
+        for i in tqdm(range(n_iter), total=n_iter, desc="Validation Iterations"):
             # clear all constraints from the previous iteration
             self.m.clear_constraints()
 
