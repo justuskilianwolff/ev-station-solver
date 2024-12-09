@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Callable, Literal, Optional, Union
+from typing import Callable, Literal
 
 import numpy as np
 from docplex.mp.model import Model
@@ -33,8 +33,8 @@ class Solver:
         service_level: float = MOPTA_CONSTANTS["service_level"],
         station_ub: int = MOPTA_CONSTANTS["station_ub"],
         queue_size: int = MOPTA_CONSTANTS["queue_size"],
-        fixed_station_number: Optional[int] = None,
-        streamlit_callback: Optional[Callable] = None,
+        fixed_station_number: int | None = None,
+        streamlit_callback: Callable | None = None,
     ):
         """
         Initialize the MOPTA solver with the given parameters.
@@ -138,12 +138,12 @@ class Solver:
         n_stations: int,
         mode: Literal["random", "k-means"] = "random",
         verbose: int = 0,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ) -> None:
         """
         Add initial locations to the model
         :param n_stations: number of locations to add
-        :param mode: random, k-means, k-means-constrained
+        :param mode: random, k-means
         :param verbose: verbosity mode
         :param seed: seed for random state
         """
@@ -205,7 +205,7 @@ class Solver:
         epsilon_stable: float = 10e-2,
         counting_radius: float = MOPTA_CONSTANTS["counting_radius"],
         min_distance: float = MOPTA_CONSTANTS["min_distance"],
-        timelimit: Optional[float] = 10,
+        timelimit: float | None = 10,
         verbose: bool = False,
     ) -> list[LocationSolution]:
         """
@@ -395,16 +395,16 @@ class Solver:
     def apply_improvement_heuristic(
         self,
         solution: LocationSolution,
-        min_distance: Optional[float] = None,
-        counting_radius: Optional[float] = None,
+        min_distance: float | None = None,
+        counting_radius: float | None = None,
         filter_locations: bool = False,
-    ) -> Union[None, SolveSolution]:
+    ) -> None | SolveSolution:
         """Apply the improvement heuristic to the current solution.
 
         Args:
             solution (LocationSolution): current solution to the location improvement problem
-            min_distance (Optional[float], optional): minimum distance for filtering. Defaults to None.
-            counting_radius (Optional[float], optional): counting radius for filtering. Defaults to None.
+            min_distance (float|None, optional): minimum distance for filtering. Defaults to None.
+            counting_radius (float|None, optional): counting radius for filtering. Defaults to None.
             filter_locations (bool, optional): whether to filter locations or apply improvement to all built locations. Defaults to False.
 
         Raises:
@@ -412,7 +412,7 @@ class Solver:
             ValueError: counting radius not set if filtering is applied
 
         Returns:
-            Union[None, SolveSolution]: if no new locations are found, return None. Otherwise, return the mip start with the new locations.
+            None| SolveSolution]: if no new locations are found, return None. Otherwise, return the mip start with the new locations.
         """
         # compute for every built location its best location. Return that location and its indice
         new_potential_cl, relating_old_potential_cl_indices, cl_built_no_all_indices = self.find_improved_locations(

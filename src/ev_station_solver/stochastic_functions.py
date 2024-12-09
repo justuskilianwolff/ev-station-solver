@@ -1,5 +1,3 @@
-from typing import Optional
-
 import numpy as np
 from scipy.stats import truncnorm
 
@@ -16,7 +14,7 @@ def ev_charging_probabilities(ranges: np.ndarray) -> np.ndarray:
     return charge_prob
 
 
-def ev_charging(ranges: np.ndarray, charging_probabilites: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
+def ev_charging(ranges: np.ndarray, charging_probabilites: np.ndarray, seed: int | None = None) -> np.ndarray:
     """
     Determines whether a vehicle wants to charge based on its range and a random number.
     :param ev_range: ranges of vehicles
@@ -28,7 +26,7 @@ def ev_charging(ranges: np.ndarray, charging_probabilites: np.ndarray, seed: Opt
     return np.random.uniform(size=len(ranges)) <= charging_probabilites
 
 
-def generate_ranges(num: int, seed: Optional[int] = None) -> np.ndarray:
+def generate_ranges(num: int, seed: int | None = None) -> np.ndarray:
     """
     Generate num ranges from truncated normal distribution.
     :param seed: use seed for ranges

@@ -1,12 +1,12 @@
 import logging
 import sys
-from typing import Literal, Optional, Union
+from typing import Literal
 
 
 def get_logger(
-    name: Optional[str] = None,
-    level: Union[int, str] = logging.INFO,
-    file_name: Optional[str] = None,
+    name: str | None = None,
+    level: int | str = logging.INFO,
+    file_name: str | None = None,
     warn: bool = True,
     mode: Literal["w", "a"] = "w",
 ) -> logging.Logger:
@@ -14,9 +14,9 @@ def get_logger(
     This logger also inherits from the root logger, so any changes to the root logger will affect this logger as well.
 
     Args:
-        name (Optional[str]): name of the logger
+        name (str | None): name of the logger
         level (logging._Level, optional): logging level. Defaults to logging.INFO.
-        file_name (Optional[str], optional): file name to log to as the root logger. Defaults to None.
+        file_name (str | None, optional): file name to log to as the root logger. Defaults to None.
         warn (bool, optional): warnings enables for overwriting file handlers. Defaults to True.
         mode (Literal["w", "a"], optional): whether to write or append. Defaults to "w".
 
