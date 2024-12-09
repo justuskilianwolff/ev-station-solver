@@ -72,7 +72,19 @@ class Validator:
         self.m.parameters.preprocessing.presolve = 0  # type: ignore
         self.m.parameters.timelimit.set(timelimit)  # type: ignore
 
-    def validate(self, desired_service_level: float, n_iter: int = 50, verbose: bool = False):
+    def validate(self, desired_service_level: float, n_iter: int = 50) -> list[ValidationSolution]:
+        """Validate the solution by sampling vehicles and checking if the service level is attainable.
+
+        Args:
+            desired_service_level (float): desired service level
+            n_iter (int, optional): number of validation iterations. Defaults to 50.
+
+        Raises:
+            ValueError: if no solve details are obtained
+
+        Returns:
+            list[ValidationSolution]: list of validation solutions
+        """
         logger.info(f"Starting allocation problem with {n_iter} iterations.")
 
         # set decision variables
@@ -100,14 +112,14 @@ class Validator:
 
             # set constraints
             self.add_allocated_to_charger_constrainst(u_sample=u_sample, s=s)
-            self.add_allocated_to_2q_constrainst(u_sample=u_sample, s=s, queue_size=self.queue_size)
+            self.add_allocated_to_qw_constrainst(u_sample=u_sample, s=s, queue_size=self.queue_size)
             self.add_service_level_constraint(u_sample=u_sample, s=s, service_level=service_level)
 
             self.update_objective(u_sample=u_sample, s=s)
             self.update_kpis()
 
             # solve the problem
-            sol = self.m.solve(log_output=verbose, clean_before_solve=True)
+            sol = self.m.solve(clean_before_solve=True)
             # obtain solve details
             sol_det = self.m.solve_details
             if not isinstance(sol_det, SolveDetails):
@@ -150,7 +162,7 @@ class Validator:
 
         return self.solutions
 
-    def set_decision_variables(self):
+    def set_decision_variables(self) -> None:
         """Set initial decision variables for the expected number of vehicles"""
 
         # create a general u for the expexted number of vehicles
@@ -182,30 +194,57 @@ class Validator:
 
         return np.where(s.reachable, self.u[: s.n_vehicles, :], 0)  # define u for this sample
 
-    def add_allocated_to_charger_constrainst(self, u_sample: np.ndarray, s: Sample):
+    def add_allocated_to_charger_constrainst(self, u_sample: np.ndarray, s: Sample) -> None:
+        """Add constraints to the model that vehicles are allocated to at most one charger.
+
+        Args:
+            u_sample (np.ndarray): decision variables for the current sample
+            s (Sample): current sample
+        """
         # allocated up to one charger
         constraints = self.m.add_constraints((self.m.sum(u_sample[i, j] for j in self.J) <= 1 for i in s.I))
         self.allocated_one_charger_constraints.append(constraints)
 
-    def add_allocated_to_2q_constrainst(self, u_sample: np.ndarray, s: Sample, queue_size: int):
+    def add_allocated_to_qw_constrainst(self, u_sample: np.ndarray, s: Sample, queue_size: int) -> None:
+        """Add constraints to the model that vehicles are allocated to at most 2n chargers.
+
+        Args:
+            u_sample (np.ndarray): decision variables for the current sample
+            s (Sample): current sample
+            queue_size (int): queue size
+        """
         # allocated up to 2n
         constraints = self.m.add_constraints(
             (self.m.sum(u_sample[i, j] for i in s.I) <= queue_size * self.w_sol[j] for j in self.J)
         )
         self.allocated_up_to_qn_constraints.append(constraints)
 
-    def add_service_level_constraint(self, u_sample: np.ndarray, s: Sample, service_level: float):
+    def add_service_level_constraint(self, u_sample: np.ndarray, s: Sample, service_level: float) -> None:
+        """Add constraints to the model that the service level is met.
+
+        Args:
+            u_sample (np.ndarray): decision variables for the current sample
+            s (Sample): current sample
+            service_level (float): service level
+        """
         constraint = self.m.add_constraint(self.m.sum(u_sample) / s.n_vehicles >= service_level)
         self.service_level_constraints.append(constraint)
 
-    def update_objective(self, u_sample: np.ndarray, s: Sample):
+    def update_objective(self, u_sample: np.ndarray, s: Sample) -> None:
+        """Update the objective function of the model.
+
+        Args:
+            u_sample (np.ndarray): current decision variables
+            s (Sample): current sample
+        """
         # update objective terms
         self.fixed_charge_cost = s.get_fixed_charge_cost(charge_cost_param=self.charge_cost_param)
         self.drive_charge_cost = self.drive_charge_cost_param * self.m.sum(u_sample * s.distance_matrix)
 
         self.m.minimize(self.build_cost + self.maintenance_cost + self.fixed_charge_cost + 365 * self.drive_charge_cost)
 
-    def update_kpis(self):
+    def update_kpis(self) -> None:
+        """Update the KPIs of the model with the current costs."""
         # clear all kpis
         self.m.clear_kpis()
 
