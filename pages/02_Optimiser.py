@@ -223,7 +223,7 @@ def streamlit_update(solver: Solver):
 
     # get iteration number and solution variables
     n_iterations = len(solver.solutions)  # number of iterations
-    b_sol, n_sol, u_sol = solver.solutions[-1]
+    latest_solution = solver.solutions[-1]  # get the latest solution
 
     #### SCATTER PLOT ####
     # update the iterations dfs
@@ -239,10 +239,10 @@ def streamlit_update(solver: Solver):
         {
             "x": solver.coordinates_potential_cl[:, 0],
             "y": solver.coordinates_potential_cl[:, 1],
-            "#Chargers": n_sol,
+            "#Chargers": latest_solution.w_sol,
         }
     )
-    new_df_chargers["Type"] = np.where(b_sol == 1, CHARGER_BUILT_NAME, CHARGER_NOT_BUILT_NAME)
+    new_df_chargers["Type"] = np.where(latest_solution.v_sol == 1, CHARGER_BUILT_NAME, CHARGER_NOT_BUILT_NAME)
     new_df_chargers["Iteration"] = n_iterations
     # concatenate to the existing df
     df_chargers_iterations = pd.concat([df_chargers_iterations, new_df_chargers])
@@ -264,8 +264,8 @@ def streamlit_update(solver: Solver):
     drive_charge_cost_iter.append(solver.m.kpi_value_by_name(name="drive_charge_cost"))
     fixed_charge_cost_iter.append(solver.m.kpi_value_by_name(name="fixed_charge_cost"))
 
-    locations_built_iter.append(np.sum(b_sol))
-    chargers_built_iter.append(np.sum(n_sol))
+    locations_built_iter.append(np.sum(latest_solution.v_sol))
+    chargers_built_iter.append(np.sum(latest_solution.w_sol))
 
     # values
     total_cost = "$" + str(round(total_cost_iter[-1]))
