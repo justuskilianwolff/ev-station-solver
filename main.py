@@ -8,7 +8,7 @@ from ev_station_solver.solving.validator import Validator
 
 logger = get_logger(__name__)
 
- 
+
 # use given starting solutions
 locations = load_locations("small").values  # .values.sample(100).values
 n_clusters = int(len(locations) * MOPTA_CONSTANTS["mu_charging"] / (2 * MOPTA_CONSTANTS["station_ub"]))
