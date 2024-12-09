@@ -13,13 +13,11 @@ from ev_station_solver.streamlit import (
     CHARGER_NOT_BUILT_NAME,
     OWN_DATA_IDENTIFIER,
     VEHICLE_NAME,
-    get_scatter_plot
+    get_scatter_plot,
 )
 
 ## Set page config must be first command
-st.set_page_config(
-    page_title="EV Placement - Optimiser", page_icon=":car:", layout="wide", initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="EV Placement - Optimiser", page_icon=":car:", layout="wide", initial_sidebar_state="expanded")
 
 ## DATA FRAMES ##
 # these iterations df are used for the plots with 'animation_frame': 'Iteration'
@@ -337,9 +335,7 @@ if start_optimiser:
     status_container.info("Optimisation is running...")
     with metric_container.container():
         st.header("Metrics")
-        st.write(
-            "Metrics from the latest solution, indicating the progress of the optimiser compared to the solution before."
-        )
+        st.write("Metrics from the latest solution, indicating the progress of the optimiser compared to the solution before.")
 
         col1, col2, col3 = st.columns(3)
 
@@ -433,9 +429,7 @@ if start_optimiser:
             with validate_col2:
                 st.subheader("Feasible Solutions")
                 if feasible_count > 0:
-                    st.write(
-                        f' The average total cost for feasible solutions was ${feasible["objective"].mean().round()}'
-                    )
+                    st.write(f' The average total cost for feasible solutions was ${feasible["objective"].mean().round()}')
                     n_bins = max(min(len(feasible), round(np.sqrt(len(feasible)))), 10)
                     feasible_fig = px.histogram(feasible, x="objective", nbins=n_bins).update_layout(bargap=0.2)
                     feasible_fig.update_xaxes(title="Total Cost")

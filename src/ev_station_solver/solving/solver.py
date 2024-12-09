@@ -153,9 +153,9 @@ class Solver:
             # random generator
             rng = np.random.default_rng(seed=seed)
             # scale random locations to grid
-            new_locations = rng.random((n_stations, 2)) * np.array(
-                [self.x_max - self.x_min, self.y_max - self.y_min]
-            ) + np.array([self.x_min, self.y_min])
+            new_locations = rng.random((n_stations, 2)) * np.array([self.x_max - self.x_min, self.y_max - self.y_min]) + np.array(
+                [self.x_min, self.y_min]
+            )
 
         elif mode == "k-means":
             logger.debug(f"Adding {n_stations} k-means locations.")
@@ -239,13 +239,10 @@ class Solver:
         # compute all maximum service levels to check for infeasibility
         # if one is below the minimum sla then raise
         max_service_levels = [
-            compute_maximum_matching(w=np.repeat(self.station_ub, self.n_potential_cl), reachable=s.reachable)
-            for s in self.S
+            compute_maximum_matching(w=np.repeat(self.station_ub, self.n_potential_cl), reachable=s.reachable) for s in self.S
         ]
         if min(max_service_levels) < self.service_level:
-            raise ValueError(
-                "Service level cannot be attained with the given number of locations. Please add more locations."
-            )
+            raise ValueError("Service level cannot be attained with the given number of locations. Please add more locations.")
 
         logger.debug(f"Maximum service levels for samples: {max_service_levels}")
 
@@ -344,9 +341,7 @@ class Solver:
 
             # extract current solution
 
-            solution = LocationSolution(
-                v=self.v, w=self.w, u=self.u, sol=sol, sol_det=solve_details, S=self.S, m=self.m
-            )
+            solution = LocationSolution(v=self.v, w=self.w, u=self.u, sol=sol, sol_det=solve_details, S=self.S, m=self.m)
             self.solutions.append(solution)
 
             # if a streamlit callback function was added -> call it
@@ -461,9 +456,7 @@ class Solver:
         # Update number of locations and location range
         self.n_potential_cl += n_new_potential_cl
         self.J = range(self.n_potential_cl)
-        logger.info(
-            f"{len(new_potential_cl)} improved new locations found. There are now {self.n_potential_cl} locations."
-        )
+        logger.info(f"{len(new_potential_cl)} improved new locations found. There are now {self.n_potential_cl} locations.")
 
         # mip start with new locations (allocate to improved)
         # generate new mip start
@@ -518,9 +511,7 @@ class Solver:
             K (range): new locations added to the problem
         """
 
-        created_u_s = np.array(
-            [self.m.binary_var(name=f"u_{s}_{i}_{k}") if s.reachable[i, k] else 0 for i in s.I for k in K]
-        )
+        created_u_s = np.array([self.m.binary_var(name=f"u_{s}_{i}_{k}") if s.reachable[i, k] else 0 for i in s.I for k in K])
         created_u_s = created_u_s.reshape(s.n_vehicles, len(K))
         self.u[s.index] = np.concatenate((self.u[s.index], created_u_s), axis=1)
 
@@ -578,9 +569,7 @@ class Solver:
         Args:
             K (range): new locations added to the problem
         """
-        new_v_lt_mv_constraints = self.m.add_constraints(
-            (self.v[k] <= self.w[k] for k in K), names=(f"number_v_{k}" for k in K)
-        )
+        new_v_lt_mv_constraints = self.m.add_constraints((self.v[k] <= self.w[k] for k in K), names=(f"number_v_{k}" for k in K))
         self.v_lt_w_constraints += new_v_lt_mv_constraints
 
     def add_max_queue_constraints(self, s: Sample, K: range, queue_size: int) -> None:
@@ -765,9 +754,7 @@ class Solver:
             logger.debug(f"The probabilities for building of chargers that are too close to others are {prob}.")
             return improved_locations[build_mask], old_location_indices[build_mask]
 
-    def find_improved_locations(
-        self, built_indices: np.ndarray, u_sol: list
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def find_improved_locations(self, built_indices: np.ndarray, u_sol: list) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Find improved locations for built chargers.
 
         Args:
@@ -799,9 +786,7 @@ class Solver:
 
             if len(X_allocated) != 0:  # if more than zero vehicles allocated to built charger
                 # append new locations
-                optimal_location = find_optimal_location(
-                    allocated_locations=X_allocated, allocated_ranges=ranges_allocated
-                )
+                optimal_location = find_optimal_location(allocated_locations=X_allocated, allocated_ranges=ranges_allocated)
                 distance_old = np.linalg.norm(optimal_location - self.coordinates_potential_cl[j])
                 # move slightly if really close to old chager
                 if distance_old < 10e-2:
@@ -921,9 +906,7 @@ class Solver:
         u_start = []
         for s in self.S:
             u_start.append(
-                np.concatenate(
-                    (u_sol[s.index], np.zeros((s.n_vehicles, n_new_potential_cl), dtype=float)), axis=1, dtype=float
-                )
+                np.concatenate((u_sol[s.index], np.zeros((s.n_vehicles, n_new_potential_cl), dtype=float)), axis=1, dtype=float)
             )
         return v_start, w_start, u_start
 
@@ -981,9 +964,7 @@ class Solver:
             tuple[np.ndarray, np.ndarray]: v_start, w_start
         """
         if len(cl_built_no_all_indices) > 0:
-            logger.info(
-                f"Found {len(cl_built_no_all_indices)} built locations with no vehicles allocated -> set them to 0."
-            )
+            logger.info(f"Found {len(cl_built_no_all_indices)} built locations with no vehicles allocated -> set them to 0.")
             for i in cl_built_no_all_indices:
                 v_start[i] = 0
                 w_start[i] = 0

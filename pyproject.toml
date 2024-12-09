@@ -39,7 +39,7 @@ packages = ["src/ev_station_solver"]
 
 
 [tool.ruff]
-line-length = 120
+line-length = 130
 respect-gitignore = false
 src = ["src"]
 extend-include = ["*.ipynb"]
