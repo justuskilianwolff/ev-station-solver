@@ -7,7 +7,9 @@ import streamlit as st
 
 from ev_station_solver.constants import MOPTA_CONSTANTS
 from ev_station_solver.loading import load_locations
+from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.solver import Solver
+from ev_station_solver.solving.validator import Validator
 from ev_station_solver.streamlit import (
     CHARGER_BUILT_NAME,
     CHARGER_NOT_BUILT_NAME,
@@ -15,6 +17,8 @@ from ev_station_solver.streamlit import (
     VEHICLE_NAME,
     get_scatter_plot,
 )
+
+logger = get_logger(__name__)
 
 ## Set page config must be first command
 st.set_page_config(page_title="EV Placement - Optimiser", page_icon=":car:", layout="wide", initial_sidebar_state="expanded")
@@ -51,7 +55,7 @@ with st.sidebar:
 
     # load locations
     options = ["small", "medium", "large", OWN_DATA_IDENTIFIER]
-    default_index = options.index("medium")  # default to medium
+    default_index = options.index("small")  # default to medium #TODO: change to medium
     location_selector = st.selectbox(
         label="Select vehicle data set",
         options=options,
@@ -317,7 +321,7 @@ def streamlit_update(solver: Solver):
                 "Fixed Charge Cost": fixed_charge_cost_iter,
             }
         )
-        df_cost.index = np.arange(1, n_iterations + 1)
+        df_cost = df_cost.set_index(np.arange(1, n_iterations + 1))
         df_cost.index.name = "Iteration"
 
         bar_chart = px.bar(df_cost, barmode="stack").update_layout(legend_title="Cost Type")
@@ -343,7 +347,7 @@ if start_optimiser:
         built_locs_metric = col2.metric("Locations Built", "-")
         built_chargers_metric = col3.metric("Chargers Built", "-")
 
-    mopta_solver = Solver(
+    solver = Solver(
         vehicle_locations=df_vehicle_locations.to_numpy(),
         loglevel=logging.INFO,
         build_cost=c_b,
@@ -358,13 +362,13 @@ if start_optimiser:
 
     # compute number of initial locations
     if num_k_means > 0:
-        mopta_solver.add_initial_locations(num_k_means, mode="k-means", seed=0)
+        solver.add_initial_locations(num_k_means, mode="k-means", seed=0)
     if num_random > 0:
-        mopta_solver.add_initial_locations(num_random, mode="random", seed=0)
+        solver.add_initial_locations(num_random, mode="random", seed=0)
 
-    mopta_solver.add_samples(num=num_samples)
-    try:
-        n, L, mip_gap, mip_gap_relative, iterations = mopta_solver.solve(
+    solver.add_samples(num=num_samples)
+    if True:  # try
+        solutions = solver.solve(
             verbose=False,
             timelimit=timelimit,
             epsilon_stable=epsilon_stable,
@@ -375,7 +379,7 @@ if start_optimiser:
             # export to csv
             df_export = df_chargers_iterations.copy()
             # filter for final iteration
-            df_export = df_export[df_export["Iteration"] == iterations]
+            df_export = df_export[df_export["Iteration"] == len(solutions) - 1]
             # filter for built chargers
             df_export = df_export[df_export["Type"] == CHARGER_BUILT_NAME]
             # round to 4 decimal places
@@ -386,19 +390,20 @@ if start_optimiser:
 
         if validation:
             st.subheader("Validation")
+            logger.info("Validating solution...")
             with st.spinner("Validating solution..."):
-                objective_values, build_cost, distance_cost, service_levels, mip_gaps = mopta_solver.allocation_problem(
-                    n_iter=validate_iterations,
-                    locations_built=L,
-                    v_sol_built=n,
-                    verbose=False,
+                v = Validator(
+                    coordinates_cl=solver.coordinates_potential_cl,
+                    vehicle_locations=df_vehicle_locations.to_numpy(),
+                    sol=solver.solutions[-1],
                 )
+                validation_solutions = v.validate(desired_service_level=service_level)
             # Add validation results to session state
             validate_df = pd.DataFrame(
                 {
-                    "objective": objective_values,
-                    "service_level": service_levels,
-                    "mip_gap": mip_gaps,
+                    "objective": [sol.kpis["total_cost"] for sol in validation_solutions],
+                    "service_level": [sol.kpis["service_level"] for sol in validation_solutions],
+                    "mip_gap": [sol.mip_gap for sol in validation_solutions],
                 }
             )
 
@@ -437,8 +442,8 @@ if start_optimiser:
                     st.plotly_chart(feasible_fig, use_container_width=True)
                 else:
                     st.write("No feasible solutions were found.")
-    except Exception as e:
-        status_container.error(f"Optimisation failed with error: {e}")
+    # except Exception as e:
+    #     status_container.error(f"Optimisation failed with error: {e}")
 
     ## END OF VALIDATE FUNCTION
     ########################################################################
