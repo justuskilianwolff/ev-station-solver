@@ -13,15 +13,12 @@ from ev_station_solver.streamlit import (
     CHARGER_NOT_BUILT_NAME,
     OWN_DATA_IDENTIFIER,
     VEHICLE_NAME,
-    get_scatter_plot,
+    get_scatter_plot
 )
 
 ## Set page config must be first command
 st.set_page_config(
-    page_title="EV Placement - Optimiser",
-    page_icon=":car:",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    page_title="EV Placement - Optimiser", page_icon=":car:", layout="wide", initial_sidebar_state="expanded"
 )
 
 ## DATA FRAMES ##
@@ -65,7 +62,7 @@ with st.sidebar:
     )
 
     # load data set from default and change if user selects own data
-    df_vehicle_locations = load_locations(options[default_index])
+    df_vehicle_locations = load_locations(options[default_index])  # type: ignore
     if location_selector == OWN_DATA_IDENTIFIER:
         # user wants to upload their own data
         uploaded_file = st.file_uploader(
@@ -75,7 +72,7 @@ with st.sidebar:
         if uploaded_file is not None:
             df_vehicle_locations = pd.read_csv(uploaded_file, delimiter=",", dtype=float)
     else:
-        df_vehicle_locations = load_locations(location_selector)
+        df_vehicle_locations = load_locations(location_selector)  # type: ignore
     st.caption(f"You have selected {len(df_vehicle_locations)} vehicle locations.")
 
     # add the vehicles to the iterations df
@@ -92,13 +89,7 @@ with st.sidebar:
         )
 
     # Vary upper bound of number of stations at each location
-    station_ub = st.sidebar.slider(
-        "Maximum chargers at any given station",
-        min_value=1,
-        max_value=20,
-        step=1,
-        value=8,
-    )
+    station_ub = st.sidebar.slider("Maximum chargers at any given station", min_value=1, max_value=20, step=1, value=8)
 
     st.subheader("Costs")
     # Vary the Cost & Service Level Parameters used by the solver
