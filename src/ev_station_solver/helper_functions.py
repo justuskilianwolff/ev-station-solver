@@ -21,14 +21,6 @@ def get_pdf(file_path):
     return pdf_display
 
 
-def get_indice_sets_stations(b_sol):
-    # make sure that b_sol is an integer array
-    if b_sol.dtype != "int":
-        raise ValueError("b_sol is not binary")
-
-    return np.argwhere(b_sol == 1).flatten(), np.argwhere(b_sol == 0).flatten()
-
-
 def get_distance_matrix(locations_1, locations_2):
     """
     Get the distance matrix with (m, k) and (n, k).
