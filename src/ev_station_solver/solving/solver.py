@@ -340,14 +340,13 @@ class Solver:
                     raise Exception(f"Solve ended with status: {status}")
 
             # extract current solution
-
             solution = LocationSolution(v=self.v, w=self.w, u=self.u, sol=sol, sol_det=solve_details, S=self.S, m=self.m)
             self.solutions.append(solution)
 
             # if a streamlit callback function was added -> call it
             if self.streamlit_callback is not None:
                 self.streamlit_callback(self)
-
+            # apply improvement heuristic
             mip_start = self.apply_improvement_heuristic(
                 solution=solution, min_distance=min_distance, counting_radius=counting_radius, filter_locations=True
             )
@@ -355,14 +354,15 @@ class Solver:
                 # no improved locations found -> stop the optimization routine
                 break
 
-            # Add mipstart to model
-            self.m.add_mip_start(mip_start, complete_vars=True, effort_level=4, write_level=3)
-
             # check if solution is stable -> There was no improvement compare to the last iteration
             # If it is stop the algorithm
             if self.check_stable(epsilon=epsilon_stable, warmstart=mip_start):
                 logger.info("Solution is stable -> stopping the optimization routine.")
+                solution = LocationSolution(v=self.v, w=self.w, u=self.u, sol=sol, sol_det=solve_details, S=self.S, m=self.m)
                 break
+
+            # Add mipstart to model
+            self.m.add_mip_start(mip_start, complete_vars=True, effort_level=4, write_level=3)
 
         # Optimization finished
         end_time = time.time()
