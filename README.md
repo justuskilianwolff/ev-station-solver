@@ -22,7 +22,7 @@ Our report detailing the model can be viewed in the 'Paper' tab.
 There are some things that need setup.
 
 ### Rye 
-We use rye as the package manager. To install rye on your machine follow [this](https://rye.astral.sh/guide/installation/) website. Make sure you add the shims to the path. To then install the virtual environment run 
+We use rye as the package manager. To install rye on your machine follow [this](https://rye.astral.sh/guide/installation/) website. Make sure you add the shims to the path. For your first time install make sure to follow the CPLEX section first, otherwise the install will fail. To then install the virtual environment run 
 ```shell
 rye sync --all-features
 ```
@@ -32,8 +32,11 @@ rye sync
 ```
 You might need to included the `--reset` flag if you ran other sync/lock commands. However, an extensive documentation is available at their [website](https://rye.astral.sh/).
 
-### CPLEX 
-In order to run the solver you need to have CPLEX by IBM installed and added to you Python path. Please make sure this is set up properly, otherwise the code won't run.
+#### CPLEX 
+In order to run the solver, you need to have IBM's CPLEX installed. Please ensure this is set up properly; otherwise, the code will not run. To use the CPLEX Studio runtime, locate your installation folder and run the following command, replacing the path with your folder location. 
+```shell
+rye add cplex --path /Applications/CPLEX_Studio2211/cplex/python/3.10/arm64_osx
+```
 
 ### GUI
 After activating the virtual environment, you should be able to run 
