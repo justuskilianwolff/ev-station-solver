@@ -358,6 +358,7 @@ class Solver:
             # If it is stop the algorithm
             if self.check_stable(epsilon=epsilon_stable, warmstart=mip_start):
                 logger.info("Solution is stable -> stopping the optimization routine.")
+                # set solution to use tha mip start solution
                 solution = LocationSolution(v=self.v, w=self.w, u=self.u, sol=sol, sol_det=solve_details, S=self.S, m=self.m)
                 break
 
