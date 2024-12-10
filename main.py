@@ -1,6 +1,6 @@
 import logging
 
-from ev_station_solver.constants import MOPTA_CONSTANTS
+from ev_station_solver.constants import CONSTANTS
 from ev_station_solver.loading import load_locations
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.solver import Solver
@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 # use given starting solutions
 locations = load_locations("small").sample(100).values
-n_clusters = int(len(locations) * MOPTA_CONSTANTS["mu_charging"] / (2 * MOPTA_CONSTANTS["station_ub"]))
+n_clusters = int(len(locations) * CONSTANTS["mu_charging"] / (2 * CONSTANTS["station_ub"]))
 service_level = 0.95
 
 s = Solver(vehicle_locations=locations, loglevel=logging.INFO, service_level=service_level)
