@@ -61,10 +61,9 @@ def geometric_median(X, eps=1e-5):
         y = y1
 
 
-def compute_maximum_matching(w: np.ndarray, reachable: np.ndarray):
+def compute_maximum_matching(w: np.ndarray, queue_size: int, reachable: np.ndarray):
     w = w.astype(int)  # convert to int
-    graph = np.repeat(reachable, 2 * w, axis=1)  # TODO: make sure proper parameter is passed
-    # DISCUSS with kit, how this is done
+    graph = np.repeat(reachable, queue_size * w, axis=1)
     result = maximum_bipartite_matching(csr_matrix(graph), perm_type="column")
 
     return np.mean(result >= 0)

@@ -239,7 +239,12 @@ class Solver:
         # compute all maximum service levels to check for infeasibility
         # if one is below the minimum sla then raise
         max_service_levels = [
-            compute_maximum_matching(w=np.repeat(self.station_ub, self.n_potential_cl), reachable=s.reachable) for s in self.S
+            compute_maximum_matching(
+                w=np.repeat(self.station_ub, self.n_potential_cl),
+                queue_size=self.queue_size,
+                reachable=s.reachable,
+            )
+            for s in self.S
         ]
         if min(max_service_levels) < self.service_level:
             raise ValueError("Service level cannot be attained with the given number of locations. Please add more locations.")

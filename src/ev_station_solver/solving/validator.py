@@ -99,7 +99,7 @@ class Validator:
             s = Sample(index=i, total_vehicle_locations=self.vehicles_locations, coordinates_cl=self.coordinates_cl)
 
             # compute attainable service level
-            attainable_service_level = compute_maximum_matching(w=self.w_sol, reachable=s.reachable)
+            attainable_service_level = compute_maximum_matching(w=self.w_sol, queue_size=self.queue_size, reachable=s.reachable)
             if attainable_service_level >= desired_service_level:
                 logger.debug("Service level is  attainable.")
                 service_level = desired_service_level
