@@ -10,7 +10,7 @@ logger = get_logger(__name__)
 
 
 # use given starting solutions
-locations = load_locations("small").values  # .values.sample(100).values
+locations = load_locations("small").sample(100).values
 n_clusters = int(len(locations) * MOPTA_CONSTANTS["mu_charging"] / (2 * MOPTA_CONSTANTS["station_ub"]))
 service_level = 0.95
 
