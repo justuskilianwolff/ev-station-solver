@@ -1,6 +1,6 @@
 import numpy as np
 
-from ev_station_solver.constants import MOPTA_CONSTANTS
+from ev_station_solver.constants import CONSTANTS
 from ev_station_solver.helper_functions import get_distance_matrix
 from ev_station_solver.stochastic_functions import ev_charging, ev_charging_probabilities, generate_ranges
 
@@ -26,12 +26,12 @@ class Sample:
     def __str__(self) -> str:
         return str(self.index)
 
-    def get_fixed_charge_cost(self, charge_cost_param: float, ub_range: int = MOPTA_CONSTANTS["ub_range"]) -> float:
+    def get_fixed_charge_cost(self, charge_cost_param: float, ub_range: int = CONSTANTS["ub_range"]) -> float:
         """Obtain the fixed charge cost for the sample.
 
         Args:
             charge_cost_param (float): cost of charging
-            ub_range (int, optional): the upper range. Defaults to MOPTA_CONSTANTS["ub_range"].
+            ub_range (int, optional): the upper range. Defaults to CONSTANTS["ub_range"].
 
         Returns:
             float: total fixed charge cost for the sample

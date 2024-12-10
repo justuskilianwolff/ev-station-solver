@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import truncnorm
 
-from ev_station_solver.constants import MOPTA_CONSTANTS
+from ev_station_solver.constants import CONSTANTS
 
 
 def ev_charging_probabilities(ranges: np.ndarray) -> np.ndarray:
@@ -10,7 +10,7 @@ def ev_charging_probabilities(ranges: np.ndarray) -> np.ndarray:
     :param ev_range: array of ev ranges
     :return: the probability to go to a charger
     """
-    charge_prob = np.exp(-(MOPTA_CONSTANTS["lambda_charge"] ** 2) * (ranges - 20) ** 2)
+    charge_prob = np.exp(-(CONSTANTS["lambda_charge"] ** 2) * (ranges - 20) ** 2)
     return charge_prob
 
 
@@ -33,10 +33,10 @@ def generate_ranges(num: int, seed: int | None = None) -> np.ndarray:
     :param num: number of ranges need
     :return: ranges from truncated normal distribution
     """
-    mu = MOPTA_CONSTANTS["mu_range"]  # mean
-    sigma = MOPTA_CONSTANTS["sigma_range"]  # standard deviation
-    lb = MOPTA_CONSTANTS["lb_range"]  # lower bound
-    ub = MOPTA_CONSTANTS["ub_range"]  # upper bound
+    mu = CONSTANTS["mu_range"]  # mean
+    sigma = CONSTANTS["sigma_range"]  # standard deviation
+    lb = CONSTANTS["lb_range"]  # lower bound
+    ub = CONSTANTS["ub_range"]  # upper bound
     if seed:
         np.random.seed(seed)
     t_norm = truncnorm((lb - mu) / sigma, (ub - mu) / sigma, loc=mu, scale=sigma)

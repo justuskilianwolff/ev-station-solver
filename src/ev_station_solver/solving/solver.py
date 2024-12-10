@@ -9,7 +9,7 @@ from docplex.mp.solution import SolveSolution
 from sklearn.cluster import KMeans
 from tqdm import tqdm
 
-from ev_station_solver.constants import MOPTA_CONSTANTS
+from ev_station_solver.constants import CONSTANTS
 from ev_station_solver.errors import IntegerInfeasible
 from ev_station_solver.helper_functions import compute_maximum_matching, get_distance_matrix
 from ev_station_solver.location_improvement import find_optimal_location
@@ -26,18 +26,18 @@ class Solver:
         self,
         vehicle_locations: np.ndarray,
         loglevel: int = logging.INFO,
-        build_cost: float = MOPTA_CONSTANTS["build_cost"],
-        maintenance_cost: float = MOPTA_CONSTANTS["maintenance_cost"],
-        drive_cost: float = MOPTA_CONSTANTS["drive_cost"],
-        charge_cost: float = MOPTA_CONSTANTS["charge_cost"],
-        service_level: float = MOPTA_CONSTANTS["service_level"],
-        station_ub: int = MOPTA_CONSTANTS["station_ub"],
-        queue_size: int = MOPTA_CONSTANTS["queue_size"],
+        build_cost: float = CONSTANTS["build_cost"],
+        maintenance_cost: float = CONSTANTS["maintenance_cost"],
+        drive_cost: float = CONSTANTS["drive_cost"],
+        charge_cost: float = CONSTANTS["charge_cost"],
+        service_level: float = CONSTANTS["service_level"],
+        station_ub: int = CONSTANTS["station_ub"],
+        queue_size: int = CONSTANTS["queue_size"],
         fixed_station_number: int | None = None,
         streamlit_callback: Callable | None = None,
     ):
         """
-        Initialize the MOPTA solver with the given parameters.
+        Initialize the solver with the given parameters.
 
         Common abbreviations:
         - dv: decision variable
@@ -203,8 +203,8 @@ class Solver:
     def solve(
         self,
         epsilon_stable: float = 10e-2,
-        counting_radius: float = MOPTA_CONSTANTS["counting_radius"],
-        min_distance: float = MOPTA_CONSTANTS["min_distance"],
+        counting_radius: float = CONSTANTS["counting_radius"],
+        min_distance: float = CONSTANTS["min_distance"],
         timelimit: float | None = 10,
         verbose: bool = False,
     ) -> list[LocationSolution]:
@@ -213,8 +213,8 @@ class Solver:
 
         Parameters:
             epsilon_stable (float): The threshold for determining stability of the solution. Defaults to 10e-2.
-            counting_radius (float): The radius within which locations are counted. Defaults to MOPTA_CONSTANTS["counting_radius"].
-            min_distance (float): The minimum distance between built and not built locations. Defaults to MOPTA_CONSTANTS["min_distance"].
+            counting_radius (float): The radius within which locations are counted. Defaults to CONSTANTS["counting_radius"].
+            min_distance (float): The minimum distance between built and not built locations. Defaults to CONSTANTS["min_distance"].
             timelimit (float): the maximum allowable time in seconds between successive solutions in the branch-and-cut tree. Defaults to 0.5s
             verbose (bool): Whether to log detailed output during the optimization routine. Defaults to False.
 
@@ -716,16 +716,16 @@ class Solver:
         self,
         improved_locations: np.ndarray,
         old_location_indices: np.ndarray,
-        min_distance: float = MOPTA_CONSTANTS["min_distance"],
-        counting_radius: float = MOPTA_CONSTANTS["counting_radius"],
+        min_distance: float = CONSTANTS["min_distance"],
+        counting_radius: float = CONSTANTS["counting_radius"],
     ):
         """Filter locations that are too close to other locations.
 
         Args:
             improved_locations (np.ndarray): complete list of improved locations
             old_location_indices (np.ndarray): indices of old locations that are built
-            min_distance (float, optional): min distance to existing cl. Defaults to MOPTA_CONSTANTS["min_distance"].
-            counting_radius (float, optional): counting radius to count existing stations in. Defaults to MOPTA_CONSTANTS["counting_radius"].
+            min_distance (float, optional): min distance to existing cl. Defaults to CONSTANTS["min_distance"].
+            counting_radius (float, optional): counting radius to count existing stations in. Defaults to CONSTANTS["counting_radius"].
 
         Returns:
             tuple[np.ndarray, np.ndarray]: improved locations and their old indices
@@ -740,7 +740,7 @@ class Solver:
         else:
             # compute distances to all vehicles and compute how many are in radius
             distances_vehicles = get_distance_matrix(improved_locations[too_close], self.vehicle_locations)
-            number_vehicles_in_radius = (distances_vehicles < counting_radius).sum(axis=1) * MOPTA_CONSTANTS[
+            number_vehicles_in_radius = (distances_vehicles < counting_radius).sum(axis=1) * CONSTANTS[
                 "mu_charging"
             ]  # multiply by expected charging prob
             # compute number of chargers in radius and how many are in radius

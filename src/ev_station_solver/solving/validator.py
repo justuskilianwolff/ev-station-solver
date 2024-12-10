@@ -3,7 +3,7 @@ from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from tqdm import tqdm
 
-from ev_station_solver.constants import MOPTA_CONSTANTS
+from ev_station_solver.constants import CONSTANTS
 from ev_station_solver.helper_functions import compute_maximum_matching
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.sample import Sample
@@ -19,15 +19,15 @@ class Validator:
         coordinates_cl: np.ndarray,
         vehicle_locations: np.ndarray,
         sol: LocationSolution,
-        drive_cost: float = MOPTA_CONSTANTS["drive_cost"],
-        charge_cost: float = MOPTA_CONSTANTS["charge_cost"],
-        queue_size: int = MOPTA_CONSTANTS["queue_size"],
+        drive_cost: float = CONSTANTS["drive_cost"],
+        charge_cost: float = CONSTANTS["charge_cost"],
+        queue_size: int = CONSTANTS["queue_size"],
         timelimit: int = 60,
     ):
         # vehicles
         self.vehicles_locations = vehicle_locations
         self.n_vehicles = self.vehicles_locations.shape[0]
-        self.expected_number_vehicles = int(self.n_vehicles * MOPTA_CONSTANTS["mu_charging"])
+        self.expected_number_vehicles = int(self.n_vehicles * CONSTANTS["mu_charging"])
 
         # chargin locations
         self.coordinates_cl = coordinates_cl[sol.cl_built_indices]

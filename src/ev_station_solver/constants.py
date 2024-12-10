@@ -1,4 +1,4 @@
-MOPTA_CONSTANTS = {
+CONSTANTS = {
     # ranges
     "mu_range": 100,  # mean range of vehicles
     "sigma_range": 50,  # std of range of vehicles

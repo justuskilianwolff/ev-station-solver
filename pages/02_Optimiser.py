@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from ev_station_solver.constants import MOPTA_CONSTANTS
+from ev_station_solver.constants import CONSTANTS
 from ev_station_solver.loading import load_locations
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.solver import Solver
@@ -123,9 +123,7 @@ with st.sidebar:
         """Set the number of initial locations to be generated using K-Means clustering and randomly. 
         Make sure that you give the solver enough locations to choose from to obtain a first feasible solution"""
     )
-    n_clusters_est = int(
-        len(df_vehicle_locations) * MOPTA_CONSTANTS["mu_charging"] / (MOPTA_CONSTANTS["queue_size"] * station_ub)
-    )
+    n_clusters_est = int(len(df_vehicle_locations) * CONSTANTS["mu_charging"] / (CONSTANTS["queue_size"] * station_ub))
 
     num_k_means = st.sidebar.slider(
         label="Number of K-Means Locations",
