@@ -55,7 +55,7 @@ with st.sidebar:
 
     # load locations
     options = ["small", "medium", "large", OWN_DATA_IDENTIFIER]
-    default_index = options.index("small")  # default to medium #TODO: change to medium
+    default_index = options.index("medium")
     location_selector = st.selectbox(
         label="Select vehicle data set",
         options=options,
@@ -402,7 +402,7 @@ if start_optimiser:
             validate_df = pd.DataFrame(
                 {
                     "objective": [sol.kpis["total_cost"] for sol in validation_solutions],
-                    "service_level": [sol.kpis["service_level"] for sol in validation_solutions],
+                    "service_level": [sol.service_level for sol in validation_solutions],
                     "mip_gap": [sol.mip_gap for sol in validation_solutions],
                 }
             )
@@ -422,7 +422,7 @@ if start_optimiser:
                 st.subheader("Infeasible Solutions")
                 if infeasible_count > 0:
                     st.write(
-                        f'The average service level for infeasible solutions was {infeasible["service_level"].mean().round(4)}'
+                        f'The average service level for infeasible solutions was {round(infeasible["service_level"].mean(), 4)}'
                     )
                     n_bins = max(int(np.ceil(np.sqrt(infeasible_count))), 10)
                     infeasible_fig = px.histogram(infeasible, x="service_level", nbins=n_bins).update_layout(bargap=0.2)
@@ -434,7 +434,7 @@ if start_optimiser:
             with validate_col2:
                 st.subheader("Feasible Solutions")
                 if feasible_count > 0:
-                    st.write(f' The average total cost for feasible solutions was ${feasible["objective"].mean().round()}')
+                    st.write(f' The average total cost for feasible solutions was ${round(feasible["objective"].mean(), 2)}')
                     n_bins = max(min(len(feasible), round(np.sqrt(len(feasible)))), 10)
                     feasible_fig = px.histogram(feasible, x="objective", nbins=n_bins).update_layout(bargap=0.2)
                     feasible_fig.update_xaxes(title="Total Cost")
