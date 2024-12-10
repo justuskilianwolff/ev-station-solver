@@ -6,7 +6,7 @@ from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.solver import Solver
 from ev_station_solver.solving.validator import Validator
 
-# TODO: update paper pdf
+# TODO: update paper pdf or fully remove it
 
 logger = get_logger(__name__)
 
