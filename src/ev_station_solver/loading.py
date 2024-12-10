@@ -9,9 +9,18 @@ from pandas import DataFrame
 logger = logging.getLogger(__name__)
 
 
-def load_locations(
-    mode: Literal["large", "medium", "small"] = "medium",
-) -> DataFrame:
+def load_locations(mode: Literal["large", "medium", "small"] = "medium") -> DataFrame:
+    """Load the vehicle locations from the data folder.
+
+    Args:
+        mode (Literal[large, medium, small], optional): select the file set. Defaults to "medium".
+
+    Raises:
+        ValueError: mode not supported
+
+    Returns:
+        DataFrame: dataframe with vehicle locations
+    """
     if mode == "large":
         file_name = "large_vehicle_locations.csv"
     elif mode == "medium":

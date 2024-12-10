@@ -165,9 +165,10 @@ cython_debug/
 # don't track the generated solution 
 solution.csv
 
-# dont track requirements files
-requirements*.lock
-
 .DS_Store
 
+# dont track test files on the root directory
+/test*.*
+
+# dont track vscode
 .vscode/

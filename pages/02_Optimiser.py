@@ -7,7 +7,9 @@ import streamlit as st
 
 from ev_station_solver.constants import MOPTA_CONSTANTS
 from ev_station_solver.loading import load_locations
-from ev_station_solver.mopta_solver import MOPTASolver
+from ev_station_solver.logging import get_logger
+from ev_station_solver.solving.solver import Solver
+from ev_station_solver.solving.validator import Validator
 from ev_station_solver.streamlit import (
     CHARGER_BUILT_NAME,
     CHARGER_NOT_BUILT_NAME,
@@ -16,13 +18,10 @@ from ev_station_solver.streamlit import (
     get_scatter_plot,
 )
 
+logger = get_logger(__name__)
+
 ## Set page config must be first command
-st.set_page_config(
-    page_title="EV Placement - Optimiser",
-    page_icon=":car:",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="EV Placement - Optimiser", page_icon=":car:", layout="wide", initial_sidebar_state="expanded")
 
 ## DATA FRAMES ##
 # these iterations df are used for the plots with 'animation_frame': 'Iteration'
@@ -56,7 +55,7 @@ with st.sidebar:
 
     # load locations
     options = ["small", "medium", "large", OWN_DATA_IDENTIFIER]
-    default_index = options.index("medium")  # default to medium
+    default_index = options.index("medium")
     location_selector = st.selectbox(
         label="Select vehicle data set",
         options=options,
@@ -65,7 +64,7 @@ with st.sidebar:
     )
 
     # load data set from default and change if user selects own data
-    df_vehicle_locations = load_locations(options[default_index])
+    df_vehicle_locations = load_locations(options[default_index])  # type: ignore
     if location_selector == OWN_DATA_IDENTIFIER:
         # user wants to upload their own data
         uploaded_file = st.file_uploader(
@@ -75,7 +74,7 @@ with st.sidebar:
         if uploaded_file is not None:
             df_vehicle_locations = pd.read_csv(uploaded_file, delimiter=",", dtype=float)
     else:
-        df_vehicle_locations = load_locations(location_selector)
+        df_vehicle_locations = load_locations(location_selector)  # type: ignore
     st.caption(f"You have selected {len(df_vehicle_locations)} vehicle locations.")
 
     # add the vehicles to the iterations df
@@ -92,13 +91,7 @@ with st.sidebar:
         )
 
     # Vary upper bound of number of stations at each location
-    station_ub = st.sidebar.slider(
-        "Maximum chargers at any given station",
-        min_value=1,
-        max_value=20,
-        step=1,
-        value=8,
-    )
+    station_ub = st.sidebar.slider("Maximum chargers at any given station", min_value=1, max_value=20, step=1, value=8)
 
     st.subheader("Costs")
     # Vary the Cost & Service Level Parameters used by the solver
@@ -226,7 +219,7 @@ with scatter_plot_container.container():
     get_scatter_plot(df_vehicle_locations_iterations[column_order])
 
 
-def streamlit_update(solver: MOPTASolver):
+def streamlit_update(solver: Solver):
     # this callback is called after each iteration of the solver
 
     # set dfs as global variables
@@ -234,7 +227,7 @@ def streamlit_update(solver: MOPTASolver):
 
     # get iteration number and solution variables
     n_iterations = len(solver.solutions)  # number of iterations
-    b_sol, n_sol, u_sol = solver.solutions[-1]
+    latest_solution = solver.solutions[-1]  # get the latest solution
 
     #### SCATTER PLOT ####
     # update the iterations dfs
@@ -246,8 +239,14 @@ def streamlit_update(solver: MOPTASolver):
     df_vehicle_locations_iterations = pd.concat([df_vehicle_locations_iterations, new_df_vehicle_locations])
 
     # update charger locations
-    new_df_chargers = pd.DataFrame({"x": solver.L[:, 0], "y": solver.L[:, 1], "#Chargers": n_sol})
-    new_df_chargers["Type"] = np.where(b_sol == 1, CHARGER_BUILT_NAME, CHARGER_NOT_BUILT_NAME)
+    new_df_chargers = pd.DataFrame(
+        {
+            "x": solver.coordinates_potential_cl[:, 0],
+            "y": solver.coordinates_potential_cl[:, 1],
+            "#Chargers": latest_solution.w_sol,
+        }
+    )
+    new_df_chargers["Type"] = np.where(latest_solution.v_sol == 1, CHARGER_BUILT_NAME, CHARGER_NOT_BUILT_NAME)
     new_df_chargers["Iteration"] = n_iterations
     # concatenate to the existing df
     df_chargers_iterations = pd.concat([df_chargers_iterations, new_df_chargers])
@@ -269,8 +268,8 @@ def streamlit_update(solver: MOPTASolver):
     drive_charge_cost_iter.append(solver.m.kpi_value_by_name(name="drive_charge_cost"))
     fixed_charge_cost_iter.append(solver.m.kpi_value_by_name(name="fixed_charge_cost"))
 
-    locations_built_iter.append(np.sum(b_sol))
-    chargers_built_iter.append(np.sum(n_sol))
+    locations_built_iter.append(np.sum(latest_solution.v_sol))
+    chargers_built_iter.append(np.sum(latest_solution.w_sol))
 
     # values
     total_cost = "$" + str(round(total_cost_iter[-1]))
@@ -322,7 +321,7 @@ def streamlit_update(solver: MOPTASolver):
                 "Fixed Charge Cost": fixed_charge_cost_iter,
             }
         )
-        df_cost.index = np.arange(1, n_iterations + 1)
+        df_cost = df_cost.set_index(np.arange(1, n_iterations + 1))
         df_cost.index.name = "Iteration"
 
         bar_chart = px.bar(df_cost, barmode="stack").update_layout(legend_title="Cost Type")
@@ -340,9 +339,7 @@ if start_optimiser:
     status_container.info("Optimisation is running...")
     with metric_container.container():
         st.header("Metrics")
-        st.write(
-            "Metrics from the latest solution, indicating the progress of the optimiser compared to the solution before."
-        )
+        st.write("Metrics from the latest solution, indicating the progress of the optimiser compared to the solution before.")
 
         col1, col2, col3 = st.columns(3)
 
@@ -350,7 +347,7 @@ if start_optimiser:
         built_locs_metric = col2.metric("Locations Built", "-")
         built_chargers_metric = col3.metric("Chargers Built", "-")
 
-    mopta_solver = MOPTASolver(
+    solver = Solver(
         vehicle_locations=df_vehicle_locations.to_numpy(),
         loglevel=logging.INFO,
         build_cost=c_b,
@@ -365,13 +362,13 @@ if start_optimiser:
 
     # compute number of initial locations
     if num_k_means > 0:
-        mopta_solver.add_initial_locations(num_k_means, mode="k-means", seed=0)
+        solver.add_initial_locations(num_k_means, mode="k-means", seed=0)
     if num_random > 0:
-        mopta_solver.add_initial_locations(num_random, mode="random", seed=0)
+        solver.add_initial_locations(num_random, mode="random", seed=0)
 
-    mopta_solver.add_samples(num=num_samples)
-    try:
-        n, L, mip_gap, mip_gap_relative, iterations = mopta_solver.solve(
+    solver.add_samples(num=num_samples)
+    if True:  # try
+        solutions = solver.solve(
             verbose=False,
             timelimit=timelimit,
             epsilon_stable=epsilon_stable,
@@ -382,7 +379,7 @@ if start_optimiser:
             # export to csv
             df_export = df_chargers_iterations.copy()
             # filter for final iteration
-            df_export = df_export[df_export["Iteration"] == iterations]
+            df_export = df_export[df_export["Iteration"] == len(solutions) - 1]
             # filter for built chargers
             df_export = df_export[df_export["Type"] == CHARGER_BUILT_NAME]
             # round to 4 decimal places
@@ -393,19 +390,20 @@ if start_optimiser:
 
         if validation:
             st.subheader("Validation")
+            logger.info("Validating solution...")
             with st.spinner("Validating solution..."):
-                objective_values, build_cost, distance_cost, service_levels, mip_gaps = mopta_solver.allocation_problem(
-                    n_iter=validate_iterations,
-                    L_sol=L,
-                    n_sol=n,
-                    verbose=False,
+                v = Validator(
+                    coordinates_cl=solver.coordinates_potential_cl,
+                    vehicle_locations=df_vehicle_locations.to_numpy(),
+                    sol=solver.solutions[-1],
                 )
+                validation_solutions = v.validate(desired_service_level=service_level)
             # Add validation results to session state
             validate_df = pd.DataFrame(
                 {
-                    "objective": objective_values,
-                    "service_level": service_levels,
-                    "mip_gap": mip_gaps,
+                    "objective": [sol.kpis["total_cost"] for sol in validation_solutions],
+                    "service_level": [sol.service_level for sol in validation_solutions],
+                    "mip_gap": [sol.mip_gap for sol in validation_solutions],
                 }
             )
 
@@ -424,7 +422,7 @@ if start_optimiser:
                 st.subheader("Infeasible Solutions")
                 if infeasible_count > 0:
                     st.write(
-                        f'The average service level for infeasible solutions was {infeasible["service_level"].mean().round(4)}'
+                        f'The average service level for infeasible solutions was {round(infeasible["service_level"].mean(), 4)}'
                     )
                     n_bins = max(int(np.ceil(np.sqrt(infeasible_count))), 10)
                     infeasible_fig = px.histogram(infeasible, x="service_level", nbins=n_bins).update_layout(bargap=0.2)
@@ -436,9 +434,7 @@ if start_optimiser:
             with validate_col2:
                 st.subheader("Feasible Solutions")
                 if feasible_count > 0:
-                    st.write(
-                        f' The average total cost for feasible solutions was ${feasible["objective"].mean().round()}'
-                    )
+                    st.write(f' The average total cost for feasible solutions was ${round(feasible["objective"].mean(), 2)}')
                     n_bins = max(min(len(feasible), round(np.sqrt(len(feasible)))), 10)
                     feasible_fig = px.histogram(feasible, x="objective", nbins=n_bins).update_layout(bargap=0.2)
                     feasible_fig.update_xaxes(title="Total Cost")
@@ -446,8 +442,8 @@ if start_optimiser:
                     st.plotly_chart(feasible_fig, use_container_width=True)
                 else:
                     st.write("No feasible solutions were found.")
-    except Exception as e:
-        status_container.error(f"Optimisation failed with error: {e}")
+    # except Exception as e:
+    #     status_container.error(f"Optimisation failed with error: {e}")
 
     ## END OF VALIDATE FUNCTION
     ########################################################################

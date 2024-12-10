@@ -21,14 +21,6 @@ def get_pdf(file_path):
     return pdf_display
 
 
-def get_indice_sets_stations(b_sol):
-    # make sure that b_sol is an integer array
-    if b_sol.dtype != "int":
-        raise ValueError("b_sol is not binary")
-
-    return np.argwhere(b_sol == 1).flatten(), np.argwhere(b_sol == 0).flatten()
-
-
 def get_distance_matrix(locations_1, locations_2):
     """
     Get the distance matrix with (m, k) and (n, k).
@@ -69,8 +61,9 @@ def geometric_median(X, eps=1e-5):
         y = y1
 
 
-def compute_maximum_matching(n: np.ndarray, reachable: np.ndarray):
-    graph = np.repeat(reachable, 2 * n, axis=1)
+def compute_maximum_matching(w: np.ndarray, queue_size: int, reachable: np.ndarray):
+    w = w.astype(int)  # convert to int
+    graph = np.repeat(reachable, queue_size * w, axis=1)
     result = maximum_bipartite_matching(csr_matrix(graph), perm_type="column")
 
     return np.mean(result >= 0)

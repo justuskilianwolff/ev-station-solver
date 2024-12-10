@@ -27,9 +27,7 @@ def find_optimal_location(allocated_locations, allocated_ranges):
     # geometric mean is not feasible -> set up scipy problem
     objective = lambda x: get_distance_matrix(allocated_locations, np.array([x])).sum()
     constraint = NonlinearConstraint(
-        lambda x: get_distance_matrix(allocated_locations, np.array([x])).flatten(),
-        0,
-        allocated_ranges,
+        lambda x: get_distance_matrix(allocated_locations, np.array([x])).flatten(), 0, allocated_ranges
     )
     # derivatives
     distance = lambda x: np.linalg.norm(allocated_locations - x, axis=1)
@@ -44,14 +42,7 @@ def find_optimal_location(allocated_locations, allocated_ranges):
     hess = lambda x: np.matrix([[upper_left(x), upper_right(x)], [upper_right(x), lower_right(x)]])
 
     # solve problem using trust region method
-    sol_scipy = minimize(
-        objective,
-        geom,
-        constraints=constraint,
-        method="trust-constr",
-        jac=jac,
-        hess=hess,
-    )
+    sol_scipy = minimize(objective, geom, constraints=constraint, method="trust-constr", jac=jac, hess=hess)
     # avoid numerical issues
     if not np.all(get_distance_matrix(allocated_locations, np.array([sol_scipy.x])).flatten() <= allocated_ranges):
         raise ValueError("Optimal solution of subproblem is not feasible")
