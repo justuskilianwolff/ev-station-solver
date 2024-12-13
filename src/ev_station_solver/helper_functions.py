@@ -3,7 +3,7 @@ import base64
 import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import maximum_bipartite_matching
-from scipy.spatial.distance import cdist, euclidean
+from scipy.spatial.distance import cdist, euclidean, pdist, squareform
 
 
 def get_pdf(file_path):
@@ -21,14 +21,36 @@ def get_pdf(file_path):
     return pdf_display
 
 
-def get_distance_matrix(locations_1, locations_2):
+def get_distance_matrix(
+    locations_1: np.ndarray, locations_2: np.ndarray | None = None, metric="euclidean", symmetric: bool = False
+) -> np.ndarray:
     """
-    Get the distance matrix with (m, k) and (n, k).
-    :param locations_1: (m, k) array
-    :param locations_2: (n, k) array
-    :return: (m, n) distance matrix
+    Compute a distance matrix using scipy, with optional support for returning
+    only the upper triangular part when a single dataset is provided.
+
+    Parameters:
+        locations_1 (array-like): First dataset, where each row is a data point.
+        locations_2 (array-like, optional): Second dataset, where each row is a data point. If None,
+                                      distances are computed within locations_1.
+        metric (str): The distance metric to use (default is 'euclidean').
+        symmetric (bool): Whether to return only the upper triangular part.
+                                      This is valid only when locations_2 is None.
+
+    Returns:
+        np.ndarray: A 2D distance matrix.
     """
-    return cdist(locations_1, locations_2)
+    if symmetric:
+        if locations_2 is not None:
+            raise ValueError("symmetric is valid only when locations_2 is not provided.")
+
+        # Compute pairwise distances within data1
+        distances = pdist(locations_1, metric=metric)
+
+        # Convert to a square-form distance matrix
+        return squareform(distances)
+    else:
+        # Compute pairwise distances between data1 and data2
+        return cdist(locations_1, locations_2, metric=metric)
 
 
 def geometric_median(X, eps=1e-5):
