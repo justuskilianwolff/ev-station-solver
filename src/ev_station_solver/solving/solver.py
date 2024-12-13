@@ -6,7 +6,6 @@ import numpy as np
 from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from docplex.mp.solution import SolveSolution
-from sklearn.cluster import KMeans
 from tqdm import tqdm
 
 from ev_station_solver.constants import CONSTANTS
@@ -14,6 +13,7 @@ from ev_station_solver.errors import IntegerInfeasible
 from ev_station_solver.helper_functions import compute_maximum_matching, get_distance_matrix
 from ev_station_solver.location_improvement import find_optimal_location
 from ev_station_solver.logging import get_logger
+from ev_station_solver.solving.initial_location_generator import InitialLocationGenerator
 from ev_station_solver.solving.sample import Sample
 from ev_station_solver.solving.solution import LocationSolution
 
@@ -148,28 +148,20 @@ class Solver:
         :param seed: seed for random state
         """
 
+        generator = InitialLocationGenerator(vehicle_locations=self.vehicle_locations)
         if mode == "random":
-            logger.debug("Adding random locations.")
-            # random generator
-            rng = np.random.default_rng(seed=seed)
-            # scale random locations to grid
-            new_locations = rng.random((n_stations, 2)) * np.array([self.x_max - self.x_min, self.y_max - self.y_min]) + np.array(
-                [self.x_min, self.y_min]
-            )
-
+            locations = generator.get_random_locations(n_stations=n_stations, seed=seed)
         elif mode == "k-means":
-            logger.debug(f"Adding {n_stations} k-means locations.")
-            kmeans = KMeans(n_clusters=n_stations, n_init=1, random_state=seed, verbose=verbose)
-            new_locations = kmeans.fit(self.vehicle_locations).cluster_centers_
-
+            locations = generator.get_k_means_locations(n_stations=n_stations, seed=seed, verbose=verbose)
         else:
             raise Exception('Invalid mode for initial locations. Choose between "random" or "k-means"')
 
         # add new locations
-        self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, new_locations))
-
+        self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, locations))
         self.n_potential_cl = len(self.coordinates_potential_cl)
         self.J = range(self.n_potential_cl)
+
+        logger.info(f"Added {n_stations} {mode} locations. Total number of locations: {self.n_potential_cl}.")
 
     def add_samples(self, num: int):
         def add_sample():
@@ -198,7 +190,7 @@ class Solver:
         for _ in range(num):
             add_sample()
 
-        logger.info(f"Added {num} samples. Total number of samples: {len(self.S)}.")
+        logger.info(f"Added {num} samples.")
 
     def solve(
         self,
