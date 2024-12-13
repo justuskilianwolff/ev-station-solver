@@ -22,6 +22,7 @@ s = Solver(vehicle_locations=locations, loglevel=logging.INFO, service_level=ser
 s.add_initial_locations(n_clusters, mode="k-means", seed=0)
 s.add_initial_locations(n_clusters, mode="random")
 s.add_samples(num=2)
+
 location_solutions = s.solve()
 
 best_sol = location_solutions[-1]  # take last solution (the one with optimal locations without filtering)
