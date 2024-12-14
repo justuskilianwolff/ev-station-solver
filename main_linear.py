@@ -2,15 +2,16 @@ import logging
 
 from src.ev_station_solver.loading import load_locations
 from src.ev_station_solver.logging import get_logger
-from src.ev_station_solver.solving.linear_solver import LinearSolver
-from src.ev_station_solver.solving.solver import Solver
+
+from ev_station_solver.solving.solver_discrete import SolverDiscrete
+from ev_station_solver.solving.solver_linear import LinearSolver
 
 logger = get_logger(__name__)
 
 locations = load_locations("small").sample(10).values
 service_level = 0.95
 
-s = Solver(vehicle_locations=locations, loglevel=logging.INFO, service_level=service_level)
+s = SolverDiscrete(vehicle_locations=locations, loglevel=logging.INFO, service_level=service_level)
 
 # compute number of initial locations
 s.add_initial_locations(3, mode="k-means", seed=0)

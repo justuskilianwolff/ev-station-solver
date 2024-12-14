@@ -3,8 +3,9 @@ import logging
 from src.ev_station_solver.constants import CONSTANTS
 from src.ev_station_solver.loading import load_locations
 from src.ev_station_solver.logging import get_logger
-from src.ev_station_solver.solving.solver import Solver
 from src.ev_station_solver.solving.validator import Validator
+
+from ev_station_solver.solving.solver_abstract import Solver
 
 # TODO: update paper pdf or fully remove it
 

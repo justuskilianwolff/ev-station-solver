@@ -2,7 +2,8 @@ import numpy as np
 from src.ev_station_solver.logging import get_logger
 from src.ev_station_solver.solving.sample import Sample
 from src.ev_station_solver.solving.solution import LocationSolution_linear
-from src.ev_station_solver.solving.solver import Solver
+
+from ev_station_solver.solving.solver_abstract import Solver
 
 # create logger
 logger = get_logger(__name__)

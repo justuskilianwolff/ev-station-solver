@@ -8,7 +8,7 @@ import streamlit as st
 from ev_station_solver.constants import CONSTANTS
 from ev_station_solver.loading import load_locations
 from ev_station_solver.logging import get_logger
-from ev_station_solver.solving.solver import Solver
+from ev_station_solver.solving.solver_abstract import Solver
 from ev_station_solver.solving.validator import Validator
 from ev_station_solver.streamlit import (
     CHARGER_BUILT_NAME,
