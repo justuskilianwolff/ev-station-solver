@@ -7,20 +7,22 @@ from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from docplex.mp.solution import SolveSolution
 from sklearn.cluster import KMeans
-from src.ev_station_solver.constants import CONSTANTS
-from src.ev_station_solver.errors import IntegerInfeasible
-from src.ev_station_solver.helper_functions import compute_maximum_matching, get_distance_matrix
-from src.ev_station_solver.location_improvement import find_optimal_location
-from src.ev_station_solver.logging import get_logger
-from src.ev_station_solver.solving.sample import Sample
-from src.ev_station_solver.solving.solution import LocationSolution
 from tqdm import tqdm
+
+from ev_station_solver.constants import CONSTANTS
+from ev_station_solver.errors import IntegerInfeasible
+from ev_station_solver.helper_functions import compute_maximum_matching, get_distance_matrix
+from ev_station_solver.location_improvement import find_optimal_location
+from ev_station_solver.logging import get_logger
+from ev_station_solver.solving.sample import Sample
+from ev_station_solver.solving.solution import LocationSolution
+from ev_station_solver.solving.solver_abstract import SolverAbstract
 
 # create logger
 logger = get_logger(__name__)
 
 
-class Solver:
+class SolverDiscrete(SolverAbstract):
     def __init__(
         self,
         vehicle_locations: np.ndarray,

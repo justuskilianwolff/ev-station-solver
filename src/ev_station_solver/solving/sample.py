@@ -1,7 +1,8 @@
 import numpy as np
-from src.ev_station_solver.constants import CONSTANTS
-from src.ev_station_solver.helper_functions import get_distance_matrix
-from src.ev_station_solver.stochastic_functions import ev_charging, ev_charging_probabilities, generate_ranges
+
+from ev_station_solver.constants import CONSTANTS
+from ev_station_solver.helper_functions import get_distance_matrix
+from ev_station_solver.stochastic_functions import ev_charging, ev_charging_probabilities, generate_ranges
 
 
 class Sample:

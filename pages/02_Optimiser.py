@@ -8,7 +8,7 @@ import streamlit as st
 from ev_station_solver.constants import CONSTANTS
 from ev_station_solver.loading import load_locations
 from ev_station_solver.logging import get_logger
-from ev_station_solver.solving.solver_abstract import Solver
+from ev_station_solver.solving.solver_abstract import SolverAbstract
 from ev_station_solver.solving.validator import Validator
 from ev_station_solver.streamlit import (
     CHARGER_BUILT_NAME,
@@ -217,7 +217,7 @@ with scatter_plot_container.container():
     get_scatter_plot(df_vehicle_locations_iterations[column_order])
 
 
-def streamlit_update(solver: Solver):
+def streamlit_update(solver: SolverAbstract):
     # this callback is called after each iteration of the solver
 
     # set dfs as global variables
@@ -345,7 +345,7 @@ if start_optimiser:
         built_locs_metric = col2.metric("Locations Built", "-")
         built_chargers_metric = col3.metric("Chargers Built", "-")
 
-    solver = Solver(
+    solver = SolverAbstract(
         vehicle_locations=df_vehicle_locations.to_numpy(),
         loglevel=logging.INFO,
         build_cost=c_b,

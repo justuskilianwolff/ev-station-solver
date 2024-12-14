@@ -1,15 +1,15 @@
 import numpy as np
-from src.ev_station_solver.logging import get_logger
-from src.ev_station_solver.solving.sample import Sample
-from src.ev_station_solver.solving.solution import LocationSolution_linear
 
-from ev_station_solver.solving.solver_abstract import Solver
+from ev_station_solver.logging import get_logger
+from ev_station_solver.solving.sample import Sample
+from ev_station_solver.solving.solution import LocationSolution_linear
+from ev_station_solver.solving.solver_abstract import SolverAbstract
 
 # create logger
 logger = get_logger(__name__)
 
 
-class LinearSolver(Solver):
+class LinearSolver(SolverAbstract):
     def add_new_dv_y_s(self, s: Sample, K: range):
         """Add binary variables u_{s, i, k} for each sample s, vehicle i and location k in K.
 

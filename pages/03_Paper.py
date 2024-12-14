@@ -1,5 +1,6 @@
 import streamlit as st
-from src.ev_station_solver.helper_functions import get_pdf
+
+from ev_station_solver.helper_functions import get_pdf
 
 # aper
 st.set_page_config(page_title="EV Placement - Paper", page_icon=":closed_book:")

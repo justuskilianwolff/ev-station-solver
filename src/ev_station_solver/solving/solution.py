@@ -2,8 +2,9 @@ import numpy as np
 from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from docplex.mp.solution import SolveSolution
-from src.ev_station_solver.logging import get_logger
-from src.ev_station_solver.solving.sample import Sample
+
+from ev_station_solver.logging import get_logger
+from ev_station_solver.solving.sample import Sample
 
 # create logger
 logger = get_logger(__name__)

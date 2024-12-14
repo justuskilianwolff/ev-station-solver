@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.stats import truncnorm
-from src.ev_station_solver.constants import CONSTANTS
+
+from ev_station_solver.constants import CONSTANTS
 
 
 def ev_charging_probabilities(ranges: np.ndarray) -> np.ndarray:
