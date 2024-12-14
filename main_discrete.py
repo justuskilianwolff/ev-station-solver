@@ -3,7 +3,7 @@ import logging
 from ev_station_solver.constants import CONSTANTS
 from ev_station_solver.loading import load_locations
 from ev_station_solver.logging import get_logger
-from ev_station_solver.solving.solver_abstract import SolverAbstract
+from ev_station_solver.solving.solver_discrete import SolverDiscrete
 from ev_station_solver.solving.validator import Validator
 
 # TODO: update paper pdf or fully remove it
@@ -16,7 +16,7 @@ locations = load_locations("small").sample(10).values
 n_clusters = int(len(locations) * CONSTANTS["mu_charging"] / (2 * CONSTANTS["station_ub"]))
 service_level = 0.95
 
-s = SolverAbstract(vehicle_locations=locations, loglevel=logging.INFO, service_level=service_level)
+s = SolverDiscrete(vehicle_locations=locations, loglevel=logging.INFO, service_level=service_level)
 
 # compute number of initial locations
 s.add_initial_locations(3, mode="k-means", seed=0)
