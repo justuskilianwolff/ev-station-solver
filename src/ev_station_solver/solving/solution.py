@@ -3,8 +3,8 @@ from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from docplex.mp.solution import SolveSolution
 
-from ev_station_solver.logging import get_logger
-from ev_station_solver.solving.sample import Sample
+from src.ev_station_solver.logging import get_logger
+from src.ev_station_solver.solving.sample import Sample
 
 # create logger
 logger = get_logger(__name__)
@@ -78,6 +78,59 @@ class LocationSolution(Solution):
             self.u_sol.append(np.zeros(s.reachable.shape))
             self.u_sol[-1][s.reachable] = np.array(sol.get_value_list(dvars=u[s.index][s.reachable].flatten()))
             self.u_sol[-1] = self.u_sol[-1].round().astype(float)
+
+        # set indice sets for solution
+        self.cl_built_indices, self.cl_not_built_indices = self.set_location_indice_sets()
+
+    def set_location_indice_sets(self) -> tuple[np.ndarray, np.ndarray]:
+        """Obtain the indices of built and not built locations.
+
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: list of indices for built and not built locations
+        """
+        cl_built_indices = np.argwhere(self.v_sol == 1).flatten()
+        cl_not_built_indices = np.argwhere(self.v_sol == 0).flatten()
+
+        logger.debug(f"There are {len(cl_built_indices )} built and {len(cl_not_built_indices)} not built locations.")
+        return cl_built_indices, cl_not_built_indices
+    
+class LocationSolution_linear(Solution):
+    """Solution for the location improvement problem."""
+
+    def __init__(
+        self,
+        v: np.ndarray,
+        w: np.ndarray,
+        u: list[np.ndarray],
+        sol: SolveSolution,
+        sol_det: SolveDetails,
+        S: list[Sample],
+        m: Model,
+    ) -> None:
+        """Create a location solution object.
+
+        Args:
+            v (np.ndarray): decision variable for building a charging location
+            w (np.ndarray): decision variable for how many chargers to build at charging location
+            u (list[np.ndarray]): allocatin solution
+            sol (SolveSolution): docplex solution object
+            sol_det (SolveDetails): docplex solve details object
+            S (list[Sample]): list of samples
+            m (Model): docplex model
+        """
+        super().__init__(sol_det=sol_det, sol=sol, m=m, log=True)
+
+        # extract solution
+        self.v_sol = np.array(sol.get_value_list(dvars=v)).round().astype(float)
+        self.w_sol = np.array(sol.get_value_list(dvars=w)).round().astype(float)
+
+        self.u_sol = {}
+        for s in S:
+            for i in s.I:
+                for j in range(len(self.v_sol)):
+                    self.u_sol[(s,s.I_s[i],j)] = sol.get_value(u[s.index][i,j])
+            
 
         # set indice sets for solution
         self.cl_built_indices, self.cl_not_built_indices = self.set_location_indice_sets()

@@ -3,11 +3,11 @@ from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from tqdm import tqdm
 
-from ev_station_solver.constants import CONSTANTS
-from ev_station_solver.helper_functions import compute_maximum_matching
-from ev_station_solver.logging import get_logger
-from ev_station_solver.solving.sample import Sample
-from ev_station_solver.solving.solution import LocationSolution, ValidationSolution
+from src.ev_station_solver.constants import CONSTANTS
+from src.ev_station_solver.helper_functions import compute_maximum_matching
+from src.ev_station_solver.logging import get_logger
+from src.ev_station_solver.solving.sample import Sample
+from src.ev_station_solver.solving.solution import LocationSolution, ValidationSolution
 
 # create logger
 logger = get_logger(__name__)
