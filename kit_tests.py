@@ -1,9 +1,9 @@
 import logging
 
-from src.ev_station_solver.solving.linear_solver import LinearSolver
 from src.ev_station_solver.loading import load_locations
-from src.ev_station_solver.solving.solver import Solver
 from src.ev_station_solver.logging import get_logger
+from src.ev_station_solver.solving.linear_solver import LinearSolver
+from src.ev_station_solver.solving.solver import Solver
 
 logger = get_logger(__name__)
 
@@ -34,5 +34,7 @@ print(ls.sol)
 # print(location_solutions.u_sol)
 # print(location_solutions.v_sol)
 # print(location_solutions.w_sol)
-ls.m.export_as_lp(basename="linear_model", path='C:\\Users\\ksearle\\OneDrive - University of Edinburgh\\Research\\location_chargers\\ev-station-solver\\src\\ev_station_solver')
-
+ls.m.export_as_lp(
+    basename="linear_model",
+    path="C:\\Users\\ksearle\\OneDrive - University of Edinburgh\\Research\\location_chargers\\ev-station-solver\\src\\ev_station_solver",
+)

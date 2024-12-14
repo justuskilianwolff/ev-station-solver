@@ -2,7 +2,6 @@ import numpy as np
 from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from docplex.mp.solution import SolveSolution
-
 from src.ev_station_solver.logging import get_logger
 from src.ev_station_solver.solving.sample import Sample
 
@@ -94,7 +93,8 @@ class LocationSolution(Solution):
 
         logger.debug(f"There are {len(cl_built_indices )} built and {len(cl_not_built_indices)} not built locations.")
         return cl_built_indices, cl_not_built_indices
-    
+
+
 class LocationSolution_linear(Solution):
     """Solution for the location improvement problem."""
 
@@ -129,8 +129,7 @@ class LocationSolution_linear(Solution):
         for s in S:
             for i in s.I:
                 for j in range(len(self.v_sol)):
-                    self.u_sol[(s,s.I_s[i],j)] = sol.get_value(u[s.index][i,j])
-            
+                    self.u_sol[(s, s.I_s[i], j)] = sol.get_value(u[s.index][i, j])
 
         # set indice sets for solution
         self.cl_built_indices, self.cl_not_built_indices = self.set_location_indice_sets()

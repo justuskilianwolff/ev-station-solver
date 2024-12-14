@@ -7,8 +7,6 @@ from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from docplex.mp.solution import SolveSolution
 from sklearn.cluster import KMeans
-from tqdm import tqdm
-
 from src.ev_station_solver.constants import CONSTANTS
 from src.ev_station_solver.errors import IntegerInfeasible
 from src.ev_station_solver.helper_functions import compute_maximum_matching, get_distance_matrix
@@ -16,6 +14,7 @@ from src.ev_station_solver.location_improvement import find_optimal_location
 from src.ev_station_solver.logging import get_logger
 from src.ev_station_solver.solving.sample import Sample
 from src.ev_station_solver.solving.solution import LocationSolution
+from tqdm import tqdm
 
 # create logger
 logger = get_logger(__name__)
@@ -275,7 +274,10 @@ class Solver:
 
         # set current objective value as nan (not solved yet)
         current_objective_value = float("nan")
-        self.m.export_as_lp(basename="discrete_model", path='C:\\Users\\ksearle\\OneDrive - University of Edinburgh\\Research\\location_chargers\\ev-station-solver\\src\\ev_station_solver')
+        self.m.export_as_lp(
+            basename="discrete_model",
+            path="C:\\Users\\ksearle\\OneDrive - University of Edinburgh\\Research\\location_chargers\\ev-station-solver\\src\\ev_station_solver",
+        )
         while True:
             # update iterations number
             n_outer_iterations += 1

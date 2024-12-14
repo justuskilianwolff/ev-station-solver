@@ -1,6 +1,5 @@
 import numpy as np
 from scipy.stats import truncnorm
-
 from src.ev_station_solver.constants import CONSTANTS
 
 
