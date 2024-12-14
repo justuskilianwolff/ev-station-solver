@@ -94,6 +94,7 @@ numpy==2.2.0
     # via matplotlib
     # via pandas
     # via pydeck
+    # via rustworkx
     # via scikit-learn
     # via scipy
     # via streamlit
@@ -156,6 +157,8 @@ rpds-py==0.22.3
     # via jsonschema
     # via referencing
 ruff==0.5.5
+rustworkx==0.15.1
+    # via ev-station-solver
 scikit-learn==1.6.0
     # via ev-station-solver
 scipy==1.14.1

@@ -54,6 +54,7 @@ numpy==2.2.0
     # via ev-station-solver
     # via pandas
     # via pydeck
+    # via rustworkx
     # via scikit-learn
     # via scipy
     # via streamlit
@@ -90,6 +91,8 @@ rich==13.9.4
 rpds-py==0.22.3
     # via jsonschema
     # via referencing
+rustworkx==0.15.1
+    # via ev-station-solver
 scikit-learn==1.6.0
     # via ev-station-solver
 scipy==1.14.1
