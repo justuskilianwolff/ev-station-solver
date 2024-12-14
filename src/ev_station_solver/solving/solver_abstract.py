@@ -1,18 +1,15 @@
 import logging
-import time
 from abc import ABC, abstractmethod
 from typing import Callable, Literal
 
 import numpy as np
 from docplex.mp.model import Model
-from docplex.mp.sdetails import SolveDetails
 from docplex.mp.solution import SolveSolution
 from sklearn.cluster import KMeans
 from tqdm import tqdm
 
 from ev_station_solver.constants import CONSTANTS
-from ev_station_solver.errors import IntegerInfeasible
-from ev_station_solver.helper_functions import compute_maximum_matching, get_distance_matrix
+from ev_station_solver.helper_functions import get_distance_matrix
 from ev_station_solver.location_improvement import find_optimal_location
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.sample import Sample
@@ -204,7 +201,6 @@ class SolverAbstract(ABC):
     @abstractmethod
     def solve(self):
         pass
-        
 
     def add_new_decision_variables(self, K: range):
         """Add new decision variables for new locations.
