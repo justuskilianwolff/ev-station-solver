@@ -53,6 +53,8 @@ gitpython==3.1.43
     # via streamlit
 idna==3.10
     # via requests
+igraph==0.11.8
+    # via ev-station-solver
 ipykernel==6.29.5
 ipython==8.30.0
     # via ipykernel
@@ -94,7 +96,6 @@ numpy==2.2.0
     # via matplotlib
     # via pandas
     # via pydeck
-    # via rustworkx
     # via scikit-learn
     # via scipy
     # via streamlit
@@ -157,8 +158,6 @@ rpds-py==0.22.3
     # via jsonschema
     # via referencing
 ruff==0.5.5
-rustworkx==0.15.1
-    # via ev-station-solver
 scikit-learn==1.6.0
     # via ev-station-solver
 scipy==1.14.1
@@ -176,6 +175,8 @@ streamlit==1.40.2
 tenacity==9.0.0
     # via plotly
     # via streamlit
+texttable==1.7.0
+    # via igraph
 threadpoolctl==3.5.0
     # via scikit-learn
 toml==0.10.2
