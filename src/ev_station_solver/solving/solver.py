@@ -135,8 +135,8 @@ class Solver:
 
     def add_initial_locations(
         self,
-        n_stations: int,
-        mode: Literal["random", "k-means"] = "random",
+        n_stations: int | None,
+        mode: Literal["random", "k-means", "clique"] = "random",
         verbose: int = 0,
         seed: int | None = None,
     ) -> None:
@@ -150,9 +150,24 @@ class Solver:
 
         generator = InitialLocationGenerator(vehicle_locations=self.vehicle_locations)
         if mode == "random":
-            locations = generator.get_random_locations(n_stations=n_stations, seed=seed)
+            if n_stations is None:
+                raise ValueError("Please specify the number of stations for random mode.")
+            else:
+                locations = generator.get_random_locations(n_stations=n_stations, seed=seed)
         elif mode == "k-means":
-            locations = generator.get_k_means_locations(n_stations=n_stations, seed=seed, verbose=verbose)
+            if n_stations is None:
+                raise ValueError("Please specify the number of stations for k-means mode.")
+            else:
+                locations = generator.get_k_means_locations(n_stations=n_stations, seed=seed, verbose=verbose)
+        elif mode == "clique":
+            if self.S == []:
+                raise ValueError("Please add samples before using clique mode.")
+            elif n_stations is not None:
+                raise ValueError("Please do not specify the number of stations for clique mode.")
+            else:
+                locations = generator.get_clique_locations(samples=self.S, n=self.station_ub, q=self.queue_size, seed=seed)
+                # DISCUSS: n and q are the right values?
+
         else:
             raise Exception('Invalid mode for initial locations. Choose between "random" or "k-means"')
 

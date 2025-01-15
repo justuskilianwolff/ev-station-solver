@@ -6,7 +6,7 @@ from ev_station_solver.helper_functions import get_distance_matrix
 from ev_station_solver.logging import get_logger
 from ev_station_solver.solving.sample import Sample
 
-logger = get_logger(__name__)
+logger = get_logger(__name__, "DEBUG")
 
 
 class InitialLocationGenerator:
@@ -30,6 +30,8 @@ class InitialLocationGenerator:
         return new_locations
 
     def get_clique_locations(self, samples: list[Sample], n: int, q: int, seed: int | None = None) -> np.ndarray:
+        logger.info("Computing clique locations")
+
         # concatenate locations and ranges of all vehicles in all samples
         all_vehicle_locations = np.concatenate([sample.vehicle_locations for sample in samples], axis=0)
         all_ranges = np.concatenate([sample.ranges for sample in samples], axis=0)
@@ -53,34 +55,31 @@ class InitialLocationGenerator:
 
         # create a graph object
         G = ig.Graph.Adjacency(adjacency.tolist(), mode=ig.ADJ_UNDIRECTED)
+        # give each vertex an id since deleting vertices does not keep the indexinv
+        G.vs["id"] = range(G.vcount())
 
         # store the new locations
         new_locations = np.empty((0, 2))
 
         # while the graph is not empty keep going
-
         while G.vcount() > 0:
+            logger.debug(f"Number of vertices: {G.vcount()}")
+
             # find the largest cliques
-            cliques = G.largest_cliques()
+            clique = G.largest_cliques()[0]
+            # for each clique get the ids
+            clique_ids = np.array([G.vs[node]["id"] for node in clique])
 
-            removed_nodes = []
+            # apply k means
+            kmeans = KMeans(n_clusters=-(len(clique_ids) // -(n * q)), random_state=seed)  # TODO: implement count
+            kmeans.fit(unique_locations[clique_ids])
 
-            for clique in cliques:
-                if any([node in removed_nodes for node in clique]):
-                    # if any of the nodes in the clique have been removed, skip this clique
-                    continue
-                else:
-                    # apply k means
+            # append centers to new locations
+            new_locations = np.vstack((new_locations, kmeans.cluster_centers_))
 
-                    kmeans = KMeans(n_clusters=-(len(clique) // -(n * q)), random_state=seed)
-                    kmeans.fit(unique_locations[clique])
+            # remove the clique from the graph
+            G.delete_vertices(clique)
 
-                    # append centers to new locations
-                    new_locations = np.vstack((new_locations, kmeans.cluster_centers_))
-
-                    # remove the clique from the graph
-                    G.delete_vertices(clique)
-                    removed_nodes.extend(clique)
-                    # TODO: are the indices updated as well? or do we need to update ranges and
+        logger.info("Finished computing clique locations")
 
         return new_locations

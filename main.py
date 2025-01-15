@@ -8,20 +8,22 @@ from ev_station_solver.solving.validator import Validator
 
 # TODO: update paper pdf or fully remove it
 
-logger = get_logger(__name__)
+logger = get_logger(__name__, "DEBUG")
 
 
 # use given starting solutions
-locations = load_locations("small").sample(100).values
+locations = load_locations("medium").values
 n_clusters = int(len(locations) * CONSTANTS["mu_charging"] / (2 * CONSTANTS["station_ub"]))
 service_level = 0.95
 
 s = Solver(vehicle_locations=locations, loglevel=logging.INFO, service_level=service_level)
 
 # compute number of initial locations
-s.add_initial_locations(n_clusters, mode="k-means", seed=0)
-s.add_initial_locations(n_clusters, mode="random")
 s.add_samples(num=2)
+s.add_initial_locations(n_stations=None, mode="clique")
+s.add_initial_locations(n_stations=n_clusters, mode="k-means", seed=0)
+s.add_initial_locations(n_stations=n_clusters, mode="random")
+
 
 location_solutions = s.solve()
 
