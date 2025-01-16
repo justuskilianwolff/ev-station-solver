@@ -168,7 +168,11 @@ solution.csv
 .DS_Store
 
 # dont track test files on the root directory
-/test*.*
+/test*.py
 
 # dont track vscode
 .vscode/
+visualisation_initial_locations.pdf
+
+# dont track lock files
+*.lock

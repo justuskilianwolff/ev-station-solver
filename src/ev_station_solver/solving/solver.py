@@ -6,7 +6,6 @@ import numpy as np
 from docplex.mp.model import Model
 from docplex.mp.sdetails import SolveDetails
 from docplex.mp.solution import SolveSolution
-from sklearn.cluster import KMeans
 from tqdm import tqdm
 
 from ev_station_solver.constants import CONSTANTS
@@ -14,6 +13,7 @@ from ev_station_solver.errors import IntegerInfeasible
 from ev_station_solver.helper_functions import compute_maximum_matching, get_distance_matrix
 from ev_station_solver.location_improvement import find_optimal_location
 from ev_station_solver.logging import get_logger
+from ev_station_solver.solving.initial_location_generator import InitialLocationGenerator
 from ev_station_solver.solving.sample import Sample
 from ev_station_solver.solving.solution import LocationSolution
 
@@ -135,8 +135,8 @@ class Solver:
 
     def add_initial_locations(
         self,
-        n_stations: int,
-        mode: Literal["random", "k-means"] = "random",
+        n_stations: int | None,
+        mode: Literal["random", "k-means", "clique"] = "random",
         verbose: int = 0,
         seed: int | None = None,
     ) -> None:
@@ -148,28 +148,35 @@ class Solver:
         :param seed: seed for random state
         """
 
+        generator = InitialLocationGenerator(vehicle_locations=self.vehicle_locations)
         if mode == "random":
-            logger.debug("Adding random locations.")
-            # random generator
-            rng = np.random.default_rng(seed=seed)
-            # scale random locations to grid
-            new_locations = rng.random((n_stations, 2)) * np.array([self.x_max - self.x_min, self.y_max - self.y_min]) + np.array(
-                [self.x_min, self.y_min]
-            )
-
+            if n_stations is None:
+                raise ValueError("Please specify the number of stations for random mode.")
+            else:
+                locations = generator.get_random_locations(n_stations=n_stations, seed=seed)
         elif mode == "k-means":
-            logger.debug(f"Adding {n_stations} k-means locations.")
-            kmeans = KMeans(n_clusters=n_stations, n_init=1, random_state=seed, verbose=verbose)
-            new_locations = kmeans.fit(self.vehicle_locations).cluster_centers_
+            if n_stations is None:
+                raise ValueError("Please specify the number of stations for k-means mode.")
+            else:
+                locations = generator.get_k_means_locations(n_stations=n_stations, seed=seed, verbose=verbose)
+        elif mode == "clique":
+            if self.S == []:
+                raise ValueError("Please add samples before using clique mode.")
+            elif n_stations is not None:
+                raise ValueError("Please do not specify the number of stations for clique mode.")
+            else:
+                locations = generator.get_clique_locations(samples=self.S, n=self.station_ub, q=self.queue_size, seed=seed)
+                n_stations = len(locations)
 
         else:
             raise Exception('Invalid mode for initial locations. Choose between "random" or "k-means"')
 
         # add new locations
-        self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, new_locations))
-
+        self.coordinates_potential_cl = np.concatenate((self.coordinates_potential_cl, locations))
         self.n_potential_cl = len(self.coordinates_potential_cl)
         self.J = range(self.n_potential_cl)
+
+        logger.info(f"Added {n_stations} {mode} locations. Total number of locations: {self.n_potential_cl}.")
 
     def add_samples(self, num: int):
         def add_sample():
@@ -181,11 +188,7 @@ class Solver:
             if self.coordinates_potential_cl is None:
                 raise Exception("Please add initial locations before adding samples.")
 
-            sample = Sample(
-                index=len(self.S),
-                total_vehicle_locations=self.vehicle_locations,
-                coordinates_cl=self.coordinates_potential_cl,
-            )
+            sample = Sample(index=len(self.S), total_vehicle_locations=self.vehicle_locations)
 
             # append to samples
             self.S.append(sample)
@@ -198,7 +201,14 @@ class Solver:
         for _ in range(num):
             add_sample()
 
-        logger.info(f"Added {num} samples. Total number of samples: {len(self.S)}.")
+        logger.info(f"Added {num} samples.")
+
+    def update_samples(self):
+        """
+        Update the samples distance and reachable matrix with the current charging locations.
+        """
+        for s in self.S:
+            s.set_distance_and_reachable(self.coordinates_potential_cl)
 
     def solve(
         self,
@@ -235,6 +245,9 @@ class Solver:
         else:
             # sanity check passed
             self.added_locations.append(self.coordinates_potential_cl)  # add initial locations
+
+        # update the samples
+        self.update_samples()
 
         # compute all maximum service levels to check for infeasibility
         # if one is below the minimum sla then raise
