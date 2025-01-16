@@ -166,7 +166,7 @@ class Solver:
                 raise ValueError("Please do not specify the number of stations for clique mode.")
             else:
                 locations = generator.get_clique_locations(samples=self.S, n=self.station_ub, q=self.queue_size, seed=seed)
-                # DISCUSS: n and q are the right values?
+                n_stations = len(locations)
 
         else:
             raise Exception('Invalid mode for initial locations. Choose between "random" or "k-means"')
@@ -188,11 +188,7 @@ class Solver:
             if self.coordinates_potential_cl is None:
                 raise Exception("Please add initial locations before adding samples.")
 
-            sample = Sample(
-                index=len(self.S),
-                total_vehicle_locations=self.vehicle_locations,
-                coordinates_cl=self.coordinates_potential_cl,
-            )
+            sample = Sample(index=len(self.S), total_vehicle_locations=self.vehicle_locations)
 
             # append to samples
             self.S.append(sample)
@@ -206,6 +202,13 @@ class Solver:
             add_sample()
 
         logger.info(f"Added {num} samples.")
+
+    def update_samples(self):
+        """
+        Update the samples distance and reachable matrix with the current charging locations.
+        """
+        for s in self.S:
+            s.set_distance_and_reachable(self.coordinates_potential_cl)
 
     def solve(
         self,
@@ -242,6 +245,9 @@ class Solver:
         else:
             # sanity check passed
             self.added_locations.append(self.coordinates_potential_cl)  # add initial locations
+
+        # update the samples
+        self.update_samples()
 
         # compute all maximum service levels to check for infeasibility
         # if one is below the minimum sla then raise

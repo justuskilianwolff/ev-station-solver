@@ -8,7 +8,7 @@ from ev_station_solver.solving.validator import Validator
 
 # TODO: update paper pdf or fully remove it
 
-logger = get_logger(__name__, "DEBUG")
+logger = get_logger(__name__)
 
 
 # use given starting solutions

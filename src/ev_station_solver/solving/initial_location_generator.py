@@ -1,5 +1,6 @@
 import igraph as ig
 import numpy as np
+import pandas as pd
 from sklearn.cluster import KMeans
 
 from ev_station_solver.helper_functions import get_distance_matrix
@@ -32,26 +33,41 @@ class InitialLocationGenerator:
     def get_clique_locations(self, samples: list[Sample], n: int, q: int, seed: int | None = None) -> np.ndarray:
         logger.info("Computing clique locations")
 
-        # concatenate locations and ranges of all vehicles in all samples
-        all_vehicle_locations = np.concatenate([sample.vehicle_locations for sample in samples], axis=0)
-        all_ranges = np.concatenate([sample.ranges for sample in samples], axis=0)
+        # across all samples take all locations for a specific vehicle
+        all_samples = []
 
-        # obtain unique vehicle locations and take the lowest range
-        unique_locations, unique_index = np.unique(all_vehicle_locations, axis=0, return_index=True)
-        # update ranges
-        unique_ranges = all_ranges[unique_index]
+        for sample in samples:
+            sample_id = sample.index
+            sample_vehicle_ids = sample.indices
+            sample_locations = sample.vehicle_locations
+            sample_ranges = sample.ranges
+
+            sample_df = pd.DataFrame(
+                {
+                    "sample_id": sample_id,
+                    "vehicle_id": sample_vehicle_ids,
+                    "x": sample_locations[:, 0],
+                    "y": sample_locations[:, 1],
+                    "range": sample_ranges,
+                }
+            )
+
+            all_samples.append(sample_df)
+
+        location_information = pd.concat(all_samples, ignore_index=True)
+
+        # compute df where each vehicle df is unique with the lowest range
+        min_range_df = location_information.sort_values("range").drop_duplicates(subset=["vehicle_id"], keep="first")
+        min_range_locations = min_range_df[["x", "y"]].values
+        min_ranges = min_range_df["range"].values
 
         # compute the distance matrix and construct adjacency matrix (vehicles are connected if the other location is within range)
-        distance_matrix = get_distance_matrix(unique_locations, unique_locations)
-        ranges_row = unique_ranges[:, np.newaxis]  # Shape (n, 1)
-        ranges_col = unique_ranges[np.newaxis, :]  # Shape (1, n)
-
-        # Compare distances with both ranges
-        within_range1 = distance_matrix < ranges_row  # Compare with first point's range
-        within_range2 = distance_matrix < ranges_col  # Compare with second point's range
+        distance_matrix = get_distance_matrix(min_range_locations, min_range_locations)
+        ranges_row = min_ranges[:, np.newaxis]  # Shape (n, 1)
+        ranges_col = min_ranges[np.newaxis, :]  # Shape (1, n)
 
         # Points are adjacent if within either range
-        adjacency = np.logical_or(within_range1, within_range2)
+        adjacency = np.logical_or(distance_matrix < ranges_row, distance_matrix < ranges_col)
 
         # create a graph object
         G = ig.Graph.Adjacency(adjacency.tolist(), mode=ig.ADJ_UNDIRECTED)
@@ -70,9 +86,17 @@ class InitialLocationGenerator:
             # for each clique get the ids
             clique_ids = np.array([G.vs[node]["id"] for node in clique])
 
+            # compute the vehicle ids present in the clique
+            vehicle_ids = min_range_df.iloc[clique_ids]["vehicle_id"]
+            # filter original df for only those vehicle ids
+            clique_df = location_information[location_information["vehicle_id"].isin(vehicle_ids)]
+            # compute cl
+            max_locations_by_cluster = clique_df["sample_id"].value_counts()
+            max_locations = max_locations_by_cluster.max()
+
             # apply k means
-            kmeans = KMeans(n_clusters=-(len(clique_ids) // -(n * q)), random_state=seed)  # TODO: implement count
-            kmeans.fit(unique_locations[clique_ids])
+            kmeans = KMeans(n_clusters=-(max_locations // -(n * q)), random_state=seed)
+            kmeans.fit(min_range_locations[clique_ids])
 
             # append centers to new locations
             new_locations = np.vstack((new_locations, kmeans.cluster_centers_))
