@@ -173,3 +173,6 @@ solution.csv
 # dont track vscode
 .vscode/
 visualisation_initial_locations.pdf
+
+# dont track lock files
+*.lock
