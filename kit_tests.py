@@ -7,30 +7,33 @@ from src.ev_station_solver.logging import get_logger
 import xpress as xp
 logger = get_logger(__name__)
 
-locations = load_locations("small").sample(10).values
+locations = load_locations("medium").sample(25).values
+print(locations)
 service_level = 0.95
 
 ds = Solver(vehicle_locations=locations, loglevel=logging.INFO, service_level=service_level)
 
 # compute number of initial locations
-ds.add_initial_locations(3, mode="k-means", seed=0)
-ds.add_initial_locations(3, mode="random")
-ds.add_samples(num=2)
+ds.add_initial_locations(15, mode="k-means", seed=0)
+# ds.add_initial_locations(3, mode="random")
+ds.add_samples(num=5)
 
-location_solutions = ds.solve()
-for s in ds.S:
-    print(s)
-    print(s.ranges)
-print(location_solutions[-1].u_sol)
-print(location_solutions[-1].v_sol)
-print(location_solutions[-1].w_sol)
+location_solutions = ds.solve(verbose=False,
+                timelimit=60,
+                epsilon_stable=100)
+# for s in ds.S:
+#     print(s)
+#     print(s.ranges)
+# print(location_solutions[-1].u_sol)
+# print(location_solutions[-1].v_sol)
+# print(location_solutions[-1].w_sol)
 
 ls = LinearSolver(vehicle_locations=locations, loglevel=logging.DEBUG, service_level=service_level)
 ls.J = range(ls.n_vehicles)
 ls.S = ds.S
 
 # ls.add_samples(num=2)
-ls.build_xpress_model()
+ls.build_xpress_model(300)
 for s in ls.S:
     print(s)
     print(s.ranges)
