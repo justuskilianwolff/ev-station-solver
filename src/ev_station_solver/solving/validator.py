@@ -96,7 +96,8 @@ class Validator:
             self.m.clear_constraints()
 
             # sample one sample
-            s = Sample(index=i, total_vehicle_locations=self.vehicles_locations, coordinates_cl=self.coordinates_cl)
+            s = Sample(index=i, total_vehicle_locations=self.vehicles_locations)
+            s.set_distance_and_reachable(self.coordinates_cl)
 
             # compute attainable service level
             attainable_service_level = compute_maximum_matching(w=self.w_sol, queue_size=self.queue_size, reachable=s.reachable)
