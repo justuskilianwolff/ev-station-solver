@@ -142,6 +142,13 @@ with st.sidebar:
         value=n_clusters_est,
         help="The number of initial locations to be generated randomly",
     )
+
+    check_clique = st.sidebar.checkbox(
+        label="Use clique locations",
+        value=False,
+        help="Use clique locations to generate initial locations.",
+    )
+
     st.subheader("Solver Settings")
     timelimit = st.number_input(
         "Solve Time",
@@ -357,14 +364,17 @@ if start_optimiser:
         streamlit_callback=streamlit_update,  # callback to update streamlit
         fixed_station_number=fixed_chargers_value if fixed_chargers_bool else None,
     )
+    # add the samples
+    solver.add_samples(num=num_samples)
 
     # compute number of initial locations
     if num_k_means > 0:
         solver.add_initial_locations(num_k_means, mode="k-means", seed=0)
     if num_random > 0:
         solver.add_initial_locations(num_random, mode="random", seed=0)
+    if check_clique:
+        solver.add_initial_locations(n_stations=None, mode="clique")
 
-    solver.add_samples(num=num_samples)
     if True:  # try
         solutions = solver.solve(
             verbose=False,
