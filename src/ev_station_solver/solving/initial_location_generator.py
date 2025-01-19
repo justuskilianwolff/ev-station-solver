@@ -71,7 +71,7 @@ class InitialLocationGenerator:
 
         # create a graph object
         G = ig.Graph.Adjacency(adjacency.tolist(), mode=ig.ADJ_UNDIRECTED)
-        # give each vertex an id since deleting vertices does not keep the indexinv
+        # give each vertex an id since deleting vertices does not keep the indexing
         G.vs["id"] = range(G.vcount())
 
         # store the new locations
