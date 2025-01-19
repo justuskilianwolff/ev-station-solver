@@ -17,8 +17,12 @@ from ev_station_solver.streamlit import (
     VEHICLE_NAME,
     get_scatter_plot,
 )
+import warnings
 
 logger = get_logger(__name__)
+
+# suppress FutureWarnings from pandas
+warnings.simplefilter(action="ignore", category=FutureWarning)
 
 ## Set page config must be first command
 st.set_page_config(page_title="EV Placement - Optimiser", page_icon=":car:", layout="wide", initial_sidebar_state="expanded")
@@ -388,7 +392,6 @@ if start_optimiser:
 
         if validation:
             st.subheader("Validation")
-            logger.info("Validating solution...")
             with st.spinner("Validating solution..."):
                 v = Validator(
                     coordinates_cl=solver.coordinates_potential_cl,
