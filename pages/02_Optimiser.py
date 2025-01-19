@@ -1,4 +1,5 @@
 import logging
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -17,7 +18,6 @@ from ev_station_solver.streamlit import (
     VEHICLE_NAME,
     get_scatter_plot,
 )
-import warnings
 
 logger = get_logger(__name__)
 
