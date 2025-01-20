@@ -67,7 +67,7 @@ class InitialLocationGenerator:
         ranges_col = min_ranges[np.newaxis, :]  # Shape (1, n)
 
         # Points are adjacent if within either range
-        adjacency = np.logical_or(distance_matrix < ranges_row, distance_matrix < ranges_col)
+        adjacency = np.logical_and(distance_matrix < ranges_row, distance_matrix < ranges_col)
 
         # create a graph object
         G = ig.Graph.Adjacency(adjacency.tolist(), mode=ig.ADJ_UNDIRECTED)
