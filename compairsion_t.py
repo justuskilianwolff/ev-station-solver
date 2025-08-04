@@ -12,8 +12,8 @@ logger = get_logger(__name__)
 
 locations = load_locations("medium").values
 print('open')
-percentages = [0.01, 0.02, 0.04, 0.05, 0.1, 0.15]
-values_t = np.array([5]) * 60#np.array([1, 5, 15, 30, 60]) * 60  # in minutes
+percentages = [0.5, 0.75, 1]
+values_t = np.array([15]) * 60#np.array([1, 5, 15, 30, 60]) * 60  # in minutes
 value_locations = [10]
 
 df = pd.DataFrame(
@@ -24,8 +24,8 @@ df_exact = pd.DataFrame(
     columns=['T', 'S', 'num_vehicales', 'Objective_Value', 'Solve_Time', 'MIP_Gap', 'solstatus', 'solvestatus','lower_bound']
 )
 
-sampleples = [1,3,5]
-value_location = 10
+sampleples = [5]
+value_location = 15
 t = 300
 for percentage in percentages:
     max_time = 0
@@ -65,7 +65,7 @@ for percentage in percentages:
             [t, sample, best_sol.kpis['total_cost'],np.ceil(len(selected_locations)), end - start, best_sol.mip_gap, len(solution), int(n_clusters),  len(mopta_solver.J)]
         #     # save in every iteration
             
-        df.to_csv('comparison_t_samples.csv', index=False)
+        df.to_csv('comparison_t_samples_for_large.csv', index=False)
         # # df_val.to_csv('val_t_samples.csv', index=False)
         ls = LinearSolver(vehicle_locations=selected_locations, loglevel=logging.DEBUG, service_level=0.95)
         ls.J = range(ls.n_vehicles)
@@ -77,4 +77,4 @@ for percentage in percentages:
         end = time.time()
         df_exact.loc[len(df_exact)] = \
                 [t,sample,len(selected_locations), obj_ls, end - start, mip_gap_ls,solstatus, solvestatus,lower_bound]
-        df_exact.to_csv('comparison_t_samples_exact.csv', index=False)
+        df_exact.to_csv('comparison_t_samples_exact_for_large.csv', index=False)

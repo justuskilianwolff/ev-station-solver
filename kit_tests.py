@@ -7,16 +7,16 @@ from src.ev_station_solver.logging import get_logger
 import xpress as xp
 logger = get_logger(__name__)
 
-locations = load_locations("medium").sample(25).values
+locations = load_locations("medium").sample(10).values
 print(locations)
 service_level = 0.95
 
 ds = Solver(vehicle_locations=locations, loglevel=logging.INFO, service_level=service_level)
 
 # compute number of initial locations
-ds.add_initial_locations(15, mode="k-means", seed=0)
+ds.add_initial_locations(5, mode="k-means", seed=0)
 # ds.add_initial_locations(3, mode="random")
-ds.add_samples(num=5)
+ds.add_samples(num=2)
 
 location_solutions = ds.solve(verbose=False,
                 timelimit=60,
@@ -33,7 +33,7 @@ ls.J = range(ls.n_vehicles)
 ls.S = ds.S
 
 # ls.add_samples(num=2)
-ls.build_xpress_model(300)
+ls.build_xpress_model(20)
 for s in ls.S:
     print(s)
     print(s.ranges)
